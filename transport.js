@@ -677,7 +677,8 @@ function transitWalker(layout,points,{slot,service,offset=0,waitYaw}) {
     length+=Math.hypot(x-a,y-b,z-c);
     return {a,b,c,x,y,z,start,end:length};
   }).filter(section=>section.end-section.start>.0001);
-  const speed=.93,walk=length/speed,wait=subway?0:3.4+slot%3*.65;
+  const speed=service==='tram'?.98:.93;
+  const walk=length/speed,wait=subway?0:3.4+slot%3*.65;
   const journey=walk*(subway?1:2)+wait;
   const [startX,,startZ]=points[0], [endX,endY,endZ]=points.at(-1);
   const colors=moon?['#a18fc5','#749fb2','#c78876']:['#b58b66','#548886','#9279ab'];

@@ -1,5 +1,5 @@
 import {connectWaterfront,insideIslandBelt,regionalAnnex,regionalFootprint,regionalPoint,regionSurface,riverAt,riverWidth,
-  roadElevation,specialEntrances,RESIDENCE_PLOT} from './regions.js';
+  roadElevation,specialEntrances,RESIDENCE_PLOT,SHORE_WALK_HALF_WIDTH,SHORE_WALK_LOT_GAP} from './regions.js';
 import {randomGenerator,REGION_PLACES,LARGE_REGION_PLACES,EXTENDED_REGION_PLACES} from './worlds.js';
 import {joinStreetPaths,streetNetwork} from './street-network.js';
 import {isCarWash} from './scenery.js';
@@ -75,7 +75,8 @@ function streetGraph(layout,spacing,shift,maxGrade=2.15,earthworks=false) {
       const low=Math.min(...ground.map(tile=>tile.y)), high=Math.max(...ground.map(tile=>tile.y));
       if (ground.some(tile=>tile.water||tile.bank<.26||layout.theme==='moon'&&tile.basin<-.65)||high-low>maxGrade) continue;
       if (layout.regionalSites.some(site=>regionalFootprint(site,x,z,6.05))
-        ||districtAccess.some(entry=>Math.hypot(entry.x-x,entry.z-z)<6.5)) continue;
+        ||districtAccess.some(entry=>Math.hypot(entry.x-x,entry.z-z)<6.5)
+        ||layout.shoreWalkNear?.(x,z)?.gap<SHORE_WALK_LOT_GAP) continue;
       if (Object.entries(layout.berths).some(([kind,site])=>kind!=='lighthouse'&&gap(site,{x,z})<(site.span?site.span*.66+3:8.7))) continue;
       lots.push({x,z,y:high+.045,grade:high-low,ring,perimeter,front,west,weight:rng()*4.8,westFirst:rng()>.5});
     }
@@ -105,9 +106,9 @@ function layoutStreets(layout,requiredLots) {
     attempts.push(...Array.from({length:12},(_,i)=>[12.9,5+i]));
     if (layout.theme==='island') attempts.push(...Array.from({length:16},(_,i)=>[12.9,i,3.25]));
   }
-  if (requiredLots>=EXTENDED_REGION_PLACES) {
-    for (const spacing of [12.6,12.35]) {
-      attempts.push(...Array.from({length:16},(_,i)=>[spacing,i,3.25]));
+  if (requiredLots>=EXTENDED_REGION_PLACES||layout.theme==='island'&&layout.grand) {
+    for (const spacing of layout.theme==='island'?[12.6,12.35,12.15,11.95]:[12.6,12.35]) {
+      attempts.push(...Array.from({length:20},(_,i)=>[spacing,i,3.25]));
     }
   }
   for (const [spacing,shift,maxGrade] of attempts) {
@@ -164,6 +165,7 @@ function residenceSites(layout,{available}) {
     });
     const {regionalSites,berths}=layout;
     if (samples.some(point=>point.water||point.bank<.45||layout.theme==='moon'&&point.basin<-.55
+      ||layout.shoreWalkNear?.(point.x,point.z)?.gap<SHORE_WALK_HALF_WIDTH+.95
       ||regionalSites.some(neighbor=>regionalFootprint(neighbor,point.x,point.z,2.05))
       ||Object.entries(berths).some(([kind,neighbor])=>gap(point,neighbor)<(kind==='bridge'?(neighbor.span??12)*.53:6.9)))) return [];
     const high=Math.max(...samples.map(point=>point.y)),low=Math.min(...samples.map(point=>point.y));
@@ -308,7 +310,7 @@ export function planStreetRegion(layout,buildings,requiredLots=REGION_PLACES-Obj
         if (!path||path.length<2) return false;
         for (let i=1;i<street.length;i++) add(edges.get(edgeKey(street[i-1],street[i])));
         connectors.push(path);
-        if (special.beach||special.spaceResort||special.airportDistrict) gateways.add(path);
+        if (special.beach||special.spaceResort||special.airportDistrict||special.coasterPark) gateways.add(path);
         latestPaths.set(path,false);
         return true;
       };

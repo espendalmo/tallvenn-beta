@@ -2,7 +2,7 @@ import {isSlidePark,slideRiders} from './slide-parks.js';
 import {footballActors} from './map-life.js';
 import {box,rounded,tube,dome,beam,placeParts,pointOnSite,actor,coasterActor,visitor,swimmer} from './scenery.js';
 import {randomGenerator} from './worlds.js';
-import {regionSurface,regionalPoint,resortShore} from './regions.js';
+import {regionSurface,regionalPoint,resortShore,SHORE_WALK_HALF_WIDTH} from './regions.js';
 import {airportRunway,COASTER_TRACK,WOOD_COASTER_TRACK,woodCoasterScale,planeModel,lightPlaneModel,shuttleModel,ROCKET_PAD,WHEEL_HUB} from './world-landmarks.js';
 
 const paint='#e3ae55';
@@ -100,11 +100,12 @@ export function rideModels(plot,stages) {
     return [{kind:'wheel',x,y,z,yaw:plot.yaw,parts}];
   }
   if (plot.kind==='coaster'||plot.kind==='woodCoaster') {
-    const track=plot.kind==='woodCoaster'?WOOD_COASTER_TRACK:COASTER_TRACK;
-    const scale=plot.kind==='woodCoaster'?woodCoasterScale(plot):1;
+    const wood=plot.kind==='woodCoaster';
+    const track=wood?WOOD_COASTER_TRACK:COASTER_TRACK;
+    const scale=wood?woodCoasterScale(plot):1;
     const points=track.map(([x,y,z])=>pointOnSite([x*scale,y+.11,z],plot));
-    const colors=plot.kind==='woodCoaster'?['#a85f4a','#ca9a62','#679384']:['#da866a','#70aeb0'];
-    return colors.map((color,i)=>coasterActor(coasterCarModel(color,true),points,.23+i*(plot.kind==='woodCoaster'?.031:.039)));
+    const colors=wood?['#a85f4a','#ca9a62','#679384']:['#da866a','#70aeb0'];
+    return colors.map((color,i)=>coasterActor(coasterCarModel(color,true),points,wood?.14:.23+i*.039,{wood,car:i}));
   }
   if (plot.kind==='field'||plot.kind==='spaceField') return footballActors(plot);
   if (plot.kind==='lunarResort') return moonDustBathers(plot);
@@ -247,18 +248,35 @@ export function landmarkVisitors(theme,plot,mobile,seed=0) {
   return placeParts(people,plot);
 }
 
-export function resortBeach(layout,plot) {
+export function resortBeach(layout,plot,withPromenade) {
   const parts=[], swimmers=[];
   const colors=['#e28e78','#4e9d9a','#e4bd68','#8b91b5'];
+  const shorePath=withPromenade?layout.shoreWalk?.[0]:null;
   const ground=(x,z)=>{
     const point=regionalPoint(plot,x,z);
     return {...point,y:regionSurface(layout,point.x,point.z).y+.045};
   };
-  for (let i=0;i<9;i++) {
-    const x=(i-4)*2.8,shore=resortShore(layout,plot,x);
-    if (shore===null) continue;
-    const z=shore-2.4-(i%3)*.76;
-    if (z<6.95) continue;
+  const beachRoom=(x,z)=>{
+    if (z<6.95) return false;
+    return [-1.4,0,1.4].every(dx=>[-1.18,0,.96].every(dz=>{
+      const at=regionalPoint(plot,x+dx,z+dz);
+      return !regionSurface(layout,at.x,at.z).water
+        &&!(withPromenade&&layout.shoreWalkNear?.(at.x,at.z)?.gap<SHORE_WALK_HALF_WIDTH+.27);
+    }));
+  };
+  const setups=[];
+  const maxGroups=withPromenade?17:9;
+  for (let i=0;i<maxGroups;i++) {
+    const x=(i-(maxGroups-1)/2)*(withPromenade?1.9:2.8);
+    const shore=resortShore(layout,plot,x);
+    if (shore===null||withPromenade&&Math.abs(x)<1.18) continue;
+    if (withPromenade&&setups.some(set=>Math.abs(set.x-x)<2.55)) continue;
+    const preferred=shore-2.4-(i%3)*.76;
+    const candidates=withPromenade?[-.85,-.5,0,.45,.9,1.35,1.8,2.25,2.7,3.15,3.6,4.05,4.5].map(inset=>preferred-inset):[preferred];
+    const z=candidates.find(z=>withPromenade?beachRoom(x,z):z>=6.95);
+    if (z!==undefined) setups.push({x,z});
+  }
+  for (const [i,{x,z}] of setups.entries()) {
     const site={...ground(x,z),yaw:plot.yaw+(i%2?.08:-.14)};
     const stripe=colors[i%colors.length];
     const seat=(x,z)=>[
@@ -282,10 +300,17 @@ export function resortBeach(layout,plot) {
   // Boards and steps connect the sun deck to the sand.
   const shore=resortShore(layout,plot,0);
   if (shore!==null) {
-    const length=Math.max(1,shore-9.7);
+    const start=6.08;
+    const c=Math.cos(plot.yaw),s=Math.sin(plot.yaw);
+    const joined=(shorePath??[]).reduce((best,point)=>{
+      const dx=point.x-plot.x,dz=point.z-plot.z;
+      const across=Math.abs(dx*c-dz*s),along=dx*s+dz*c;
+      return across<1.2&&along>start&&along<shore&&(!best||across<best.across)?{across,along}:best;
+    },null);
+    const length=Math.max(1,(joined?.along??shore-3.62)-start);
     const count=Math.ceil(length/.65);
     for (let i=0;i<count;i++) {
-      const z=6.08+(i+.5)*length/count;
+      const z=start+(i+.5)*length/count;
       const deck=plot.y+.27;
       const site=ground(0,z);
       const y=Math.max(site.y,deck-(i+1)*.22);
@@ -304,7 +329,7 @@ export function resortBeach(layout,plot) {
     const visitor=actor(swimmer(['#dda97d','#b78464','#ebbe9c'][i],colors[i]),route,
       {kind:'swimmer',ground:.029,speed:.54+i*.08,phase:i*.31,corner:.47});
     if (visitor.route.segments.every(({x,z,dx,dz})=>[0,.5,1].every(t=>regionSurface(layout,x+dx*t,z+dz*t).water))) {
-      swimmers.push(visitor);
+      swimmers.push({...visitor,coastal:true,coastalSource:plot.index});
     }
   }
   return {parts,swimmers};

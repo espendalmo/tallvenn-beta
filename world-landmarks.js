@@ -3,7 +3,7 @@ import {box as b,rounded as r,dome as d,tube as t,roof,beam,worldSign,pointOnSit
 import {transitStation,helipadParts,REGIONAL_HELIPAD} from './transport.js';
 import {slidePark} from './slide-parks.js';
 import {detailFacades} from './facades.js';
-import {RESIDENCE_PLOT} from './regions.js';
+import {RESIDENCE_PLOT,WOOD_COASTER_PLOT} from './regions.js';
 
 const cream='#f3e5c8', stone='#c9bda6', dark='#344451', glass='#68a4ba', ice='#a1dae2';
 const brass='#e5bc68', teal='#347e81', rose='#c86173';
@@ -286,38 +286,98 @@ function coaster() {
   ];
 }
 
-const WOOD_COASTER_POSTS=[[-6,.83,3.6],[-6.25,2.8,1.75],[-6.1,6.8,-1.4],[-4.35,7.7,-3.85],
-  [-1.05,4,-4.15],[2.3,1.48,-4.1],[5.18,3.86,-3.7],[6.48,2.75,-1.8],[6.59,1.06,1.2],
-  [5.17,1.62,3.85],[2.42,3.21,3.99],[-.23,1.21,3.93],[-3.4,.8,3.84]];
-export const WOOD_COASTER_TRACK=WOOD_COASTER_POSTS.flatMap((point,i)=>{
-  const a=WOOD_COASTER_POSTS.at(i-1),b=WOOD_COASTER_POSTS[(i+1)%WOOD_COASTER_POSTS.length];
-  return [.18,0,-.18].map(t=>point.map((v,j)=>v*(1-Math.abs(t))+(t>0?a[j]:b[j])*Math.abs(t)));
+const WOOD_COASTER_TURNS=[
+  [2.8,1.20,4.95],[-1.8,1.20,4.95],[-5.6,1.55,4.85],[-8.4,2.65,3.30],[-9.05,5.45,.05],
+  [-8.25,8.35,-3.35],[-5.6,10.3,-5.75],[-1.65,10.9,-5.82],[2.4,7.45,-5.81],[5.95,1.52,-5.65],
+  [8.1,1.56,-4.3],[9.13,3.2,-1.5],[8.55,5.38,.32],[6.50,5.96,.65],[3,4.15,.28],
+  [.03,1.6,-.55],[-2.8,1.32,-.85],[-5.24,2.3,-.68],[-5.47,3.42,1.76],[-3.69,3.56,2.7],
+  [.1,2.9,2.85],[3.55,2.35,2.55],[6.41,1.46,2.98],[6.56,1.2,4.36],[5.03,1.20,4.91],
+];
+
+export const WOOD_COASTER_TRACK=WOOD_COASTER_TURNS.flatMap((point,i)=>{
+  const before=WOOD_COASTER_TURNS.at(i-1),after=WOOD_COASTER_TURNS[(i+1)%WOOD_COASTER_TURNS.length];
+  return [.20,0,-.20].map(t=>point.map((v,j)=>v*(1-Math.abs(t))+(t>0?before[j]:after[j])*Math.abs(t)));
 });
 
-export const woodCoasterScale=site=>site?.streetSpan?Math.min(1,(site.streetSpan-2.65)/15.4):1;
+export const woodCoasterScale=site=>site?.streetSpan?Math.min(1,(site.streetSpan-2.65)/(WOOD_COASTER_PLOT.halfWidth*2)):1;
 
-function woodCoaster(_,site) {
-  const timber='#99724e',brace='#c2996c',steel='#685043';
-  const edge=(i,side)=>{
-    const [x,y,z]=WOOD_COASTER_TRACK[i];
-    const a=WOOD_COASTER_TRACK.at(i-1),b=WOOD_COASTER_TRACK[(i+1)%WOOD_COASTER_TRACK.length];
+function woodCoaster(theme,site) {
+  const island=theme==='island',timber='#a4754c',braces='#bc9368',steel='#564b43';
+  const baseColor=island?'#d8bd91':'#bfaa82',roofColor=island?'#387c76':'#984d43';
+  const {halfWidth,halfDepth}=WOOD_COASTER_PLOT;
+  const track=WOOD_COASTER_TRACK;
+  const edge=(i,side,drop=0)=>{
+    const [x,y,z]=track[i],a=track.at(i-1),b=track[(i+1)%track.length];
     const span=Math.hypot(b[0]-a[0],b[2]-a[2]);
-    return [x+side*(b[2]-a[2])/span,y,z-side*(b[0]-a[0])/span];
+    return [x+side*(b[2]-a[2])/span,y-drop,z-side*(b[0]-a[0])/span];
   };
-  const stages=[base(15.4,10.65,'#acac82'),
-    WOOD_COASTER_TRACK.flatMap((point,i)=>{
-      const previous=(i+WOOD_COASTER_TRACK.length-1)%WOOD_COASTER_TRACK.length;
-      return pair.flatMap(side=>{
-        const [x,y,z]=edge(i,side*.48),[a,h,b]=edge(previous,side*.48);
-        return [beam([x,.31,z],[x,y,z],.134,timber),beam([a,h,b],[x,y,z],.17,timber),
-          beam([a,.48,b],[x,y-.11,z],.095,brace),
-          beam(edge(previous,side*.27),edge(i,side*.27),.096,steel)];
-      });
-    }),
-    [...WOOD_COASTER_TRACK.map((point,i)=>beam(edge(i,-.54),edge(i,.54),.083,brace)),
-      r(-3.8,3.76,3.55,1.66,.9,'#bc8563',.34),roof(-3.8,3.76,3.86,1.94,.63,'#597f76',1.29),
-      ...worldSign('flag',-3.8,1.05,4.6,'#8e5442')]];
+  const at=(i,side,height)=>{
+    const [x,,z]=edge(i,side);
+    return [x,height,z];
+  };
+  const supports=track.flatMap(([,y],i)=>{
+    if (i%3!==1) return [];
+    const wide=.63+Math.max(0,y-2)*.085;
+    const next=(i+3)%track.length;
+    const frame=pair.flatMap(side=>{
+      const a=at(i,side*wide,.435),b=at(next,side*wide,.435);
+      const top=edge(i,side*.47,.20),rail=edge(next,side*.47,.20);
+      return [r(a[0],a[2],.54,.54,.16,'#aa9a7d',.36),beam(a,top,.18,timber),beam(top,rail,.17,timber),
+        ...(y>2?[beam(a,rail,.115,braces),beam(b,top,.11,braces)]:[])];
+    });
+    frame.push(beam(edge(i,-wide,.39),edge(i,wide,.39),.20,timber));
+    if (y>4.8) {
+      const middle=.58+y*.43;
+      frame.push(beam(at(i,-wide,.53),at(i,wide,middle),.12,braces),
+        beam(at(i,wide,.53),at(i,-wide,middle),.12,braces),
+        beam(at(i,-wide,middle),at(i,wide,middle),.14,timber),
+        ...pair.map(side=>beam(at(i,side*wide,middle),at(next,side*wide,.69+track[next][1]*.43),.12,timber)));
+    }
+    return frame;
+  });
+  const rails=track.flatMap((_,i)=>{
+    const next=(i+1)%track.length;
+    return [...pair.map(side=>beam(edge(i,side*.30,.025),edge(next,side*.30,.025),.094,steel)),
+      beam(edge(i,-.48,.14),edge(i,.48,.14),.105,braces)];
+  });
+  const lift=track.slice(13,25).flatMap((_,i)=>{
+    const start=i+13,end=start+1;
+    return [beam(edge(start,-.61,.27),edge(end,-.61,.27),.25,braces),
+      beam(edge(start,-.74,-.33),edge(end,-.74,-.33),.076,cream),
+      ...(i%2===0?[beam(edge(start,-.74,.30),edge(start,-.74,-.35),.077,timber)]:[])];
+  });
+  const station=[
+    r(.36,5.8,6.9,1.06,.82,'#bd9267',.385),b(.36,5.79,7.06,1.17,.093,'#e8c79a',1.135),
+    ...[-2.8,-.81,1.6,3.5].flatMap(x=>[b(x,6.18,.17,.17,2.12,'#805f47',.38),b(x,4.37,.15,.15,1.32,'#805f47',1.16)]),
+    roof(.39,5.29,7.13,2.35,.86,roofColor,2.43),b(.39,6.43,7.12,.13,.19,cream,2.41),
+    ...nameplate(island?'PALMESUSET':'TRETORDEN',.37,2.19,6.45,roofColor,.102),
+    ...[-.4,.02,.44,.86].map((z,i)=>b(0,z+6.53,1.58,.43,.76-i*.18,'#c6a17a',.39)),
+    ...[-3.14,-1.56,0,1.56,3.10].map(x=>d(x,6.51,.16,.17,.18,'#f5cb76',2.17)),
+    ...pair.flatMap(side=>[
+      b(side*3.86,6.43,.14,.15,2.45,braces,.4),
+      b(side*3.86,6.43,.39,.38,.13,brass,2.79),
+    ]),
+  ];
+  const lawns=[-1,1].flatMap(side=>[
+    r(side*7.7,6.1,3.7,1.95,.062,island?'#a6b77c':'#879c6e',.38),
+    ...[-.96,1.25].flatMap(dx=>island?palm(side*7.7+dx,6.25,2.24+dx*.13):shrub(side*7.7+dx,6.24,'#6a936b',.7)),
+  ]);
+  const queue=[-1,1].flatMap(side=>{
+    const x=side*4.68;
+    return [r(x,5.96,1.83,2.67,.069,'#dcc09b',.38),
+      ...[5.03,5.96,6.89].flatMap(z=>[b(x-.74,z,.13,.13,.65,timber,.45),b(x+.74,z,.13,.13,.65,timber,.45)]),
+      ...pair.map(edge=>beam([x+edge*.74,.97,4.98],[x+edge*.74,.97,6.91],.079,roofColor)),
+      ...worldSign('flag',x+.22,.89,7.06,roofColor)];
+  });
+  const stages=[
+    base(halfWidth*2,halfDepth*2,baseColor),
+    [...supports,...rails,...lift],
+    [...station,...lawns,...queue,...walkway([[0,7.45],[0,6.22]],'#d5b287',1.84,.376),
+      ...[-9.65,9.65].flatMap(x=>island?palm(x,-5.8,2.55):shrub(x,-5.8,'#6b946b',.76)),
+      ...worldSign('flag',-7.65,1.33,5.63,roofColor)],
+  ];
   const scale=woodCoasterScale(site);
+  if (scale===1) return stages;
   const fit=([x,y,z])=>[x*scale,y,z];
   return stages.map(stage=>stage.map(part=>({...part,x:part.x*scale,...(part.w!==undefined&&{w:part.w*scale}),
     ...(part.from&&{from:fit(part.from),to:fit(part.to)})})));
@@ -2276,7 +2336,7 @@ export const GRAND_LANDMARKS={
     51:['Elveby politistasjon','Patruljebilen står klar til utrykning med blålys.','policeStation'],
     52:['Granittfyret','Et høyt steinfyr med messinglanterne og utsiktsgang.','stoneLighthouse','lighthouse'],
     53:['Elveby bilvask','Biler kjører gjennom vaskebåsen og kommer ut blanke og fine.','carWash'],
-    54:['Tretorden','En lang, klassisk berg-og-dal-bane på et reisverk av tre.','woodCoaster'],
+    54:['Tretorden','Toget klatrer opp det høye reisverket i tre før det kaster seg ned første stup.','woodCoaster'],
     55:['Elvepromenaden','En turvei med benker og lykter som følger elven.','riverWalk'],
   },
   moon:{
@@ -2319,7 +2379,7 @@ export const GRAND_LANDMARKS={
     51:['Palmeøyens politistasjon','Et politihus med grønt tak og en patruljebil til øyens gater.','policeStation'],
     52:['Stormfyret','Et klassisk, høyt steinfyr med gyllen lampe og veranda rundt lykten.','stoneLighthouse','lighthouse'],
     53:['Kokosvasken','En vaskehall med palmegrønne søyler og skum til sandete biler.','carWash'],
-    54:['Palmesuset','En klassisk berg-og-dal-bane i tre med et høyt stup og lange, lave bakker.','woodCoaster'],
+    54:['Palmesuset','En stor trebane med et høyt stup og en stasjon mellom palmene.','woodCoaster'],
     55:['Strandpromenaden','En lang gangvei i tre med utsikt over stranden og havet.','shoreWalk'],
   },
 };

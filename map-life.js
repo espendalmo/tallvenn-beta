@@ -8,6 +8,7 @@ const modulo=(value,n)=>{const remainder=value%n;return remainder<0?remainder+n:
 
 function vehicleStoryKind(actor,lunar,island) {
   const kind=actor?.kind;
+  if (actor?.seagull) return 'seagull';
   if (actor?.parts.some(piece=>piece.animalKind==='dog')) return 'dog';
   if (actor?.lunarBus) return 'rover-bus';
   if (actor?.service==='policeStation') return 'police';
@@ -93,7 +94,7 @@ export function mapCharacterInfo(scene,key,discovery,profileName) {
   const ordinal=scene.ambient.slice(0,index).filter(other=>vehicleStoryKind(other,lunar,island)===kind).length;
   const name=names[(mapStorySeed(scene.seed,kind)+ordinal)%names.length]+(ordinal>=names.length?` ${Math.floor(ordinal/names.length)+1}`:'');
   return {name,status:lunar?'Liv i månebasen':'Liv på kartet',
-    story:stories[(seed>>>12)%stories.length],sound:['dog','bird'].includes(kind)?'animal':kind==='swimmer'?'human':'vehicle',voice:seed%24};
+    story:stories[(seed>>>12)%stories.length],sound:['dog','bird','seagull'].includes(kind)?'animal':kind==='swimmer'?'human':'vehicle',voice:seed%24};
 }
 
 const walkGap=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z);

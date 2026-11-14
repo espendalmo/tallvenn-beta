@@ -571,10 +571,12 @@ export function projectCameras(scene,target=null,focusLatest=false,{compact=fals
   const largeStation=point.kind==='railwayStation'||point.kind==='monorailStation';
   const lake=point.spaceResort?scene.discoveries?.['moon-lake']:null;
   const promenade=point.kind==='riverWalk'||point.kind==='shoreWalk';
-  const framing=promenade?51:point.beach?44:point.airfield?39:lake?38:point.kind==='residence'?(point.residence?22.5:18.5)
+  const harbor=scene.id==='island'&&point.waterfront&&!promenade;
+  const framing=promenade?(point.kind==='shoreWalk'?72:51):point.coasterPark?34:point.beach?44:harbor?26:point.airfield?39:lake?38:point.kind==='residence'?(point.residence?22.5:18.5)
     :(largeStation?28:point.kind==='tramStation'?23:height*1.13+3.2)*(compact?.91:1);
-  const anchorX=point.x+(lake?(lake.x-point.x)*.26:point.beach?Math.sin(point.yaw)*5:0);
-  const anchorZ=point.z+(lake?(lake.z-point.z)*.26:point.beach?Math.cos(point.yaw)*5:0);
+  const seaward=point.beach?5:harbor?3.2:0;
+  const anchorX=point.x+(lake?(lake.x-point.x)*.26:seaward*Math.sin(point.yaw??0));
+  const anchorZ=point.z+(lake?(lake.z-point.z)*.26:seaward*Math.cos(point.yaw??0));
   const close={...initial,zoom:Math.min(maxZoom,scene.size/framing),anchorX,anchorZ,
     center:point.y+height*(point.beach?.24:height>10?.46:.37)};
   const neighbor=Object.values(scene.landmarks??{}).filter(other=>Math.hypot(other.x-point.x,other.z-point.z)>.7)

@@ -13,6 +13,9 @@ const polar=(angle,r)=>({x:Math.sin(angle)*r,z:Math.cos(angle)*r});
 
 export const RESIDENCE_PLOT={halfWidth:6.65,halfDepth:7.85,deck:.194,gateHalf:1.13,bayX:3.25,bayZ:4.03,
   paving:{city:'#cbbba2',island:'#e1caa7',moon:'#adabc0'}};
+export const WOOD_COASTER_PLOT={halfWidth:10.8,halfDepth:7.6};
+export const SHORE_WALK_HALF_WIDTH=1.12;
+export const SHORE_WALK_LOT_GAP=8.2;
 
 export function riverAt(layout,z) {
   return 6.8*Math.sin(z*.046+layout.phase)+2.45*Math.sin(z*.101-layout.phase);
@@ -88,16 +91,19 @@ export function regionSurface(layout,x,z) {
   return {y:water?.015:mix(.06,y,clamp(bank/3.25,0,1)),water,bank,basin,detail,relief,pond};
 }
 
-function coastSite(layout,angle) {
+export function islandCoastPoint(layout,angle,setback=0) {
   let near=0,far=layout.grand?95:85;
   for (let i=0;i<15;i++) {
     const point=polar(angle,(near+far)/2);
     if (coastAt(layout,point.x,point.z)>0) near=(near+far)/2;
     else far=(near+far)/2;
   }
-  const point=polar(angle,near-1.45);
-  const {x,z}=point;
-  return {...point,y:Math.max(.65,regionSurface(layout,x,z).y+.28),yaw:angle,waterfront:true};
+  return polar(angle,near-setback);
+}
+
+function coastSite(layout,angle) {
+  const {x,z}=islandCoastPoint(layout,angle,1.45);
+  return {x,z,y:Math.max(.65,regionSurface(layout,x,z).y+.28),yaw:angle,waterfront:true};
 }
 
 function cityBerth(layout,z,side) {
@@ -153,11 +159,61 @@ function districtGround(layout,site,halfWidth,halfDepth) {
   return {y:high+.09,grade:high-low,dry:samples.every(p=>!p.water&&p.bank>.35&&p.basin>-.6&&p.volcanic===undefined)};
 }
 
-export function islandPromenadePoint(layout,site,distance) {
-  const middle=regionalPoint(site,0,site.halfDepth+5);
-  const angle=Math.atan2(middle.x,middle.z)+distance/60;
-  const shore=coastSite(layout,angle);
-  return regionalPoint(shore,0,-2.8);
+function islandPromenade(layout) {
+  const resort=layout.beachResort;
+  const angle=resort?.yaw??layout.phase;
+  const beach=resort&&{
+    ...regionalPoint(resort,0,10),yaw:resort.yaw,halfWidth:11.8,halfDepth:7.8,
+  };
+  const buildings=[
+    ...layout.regionalSites.map(site=>site.beach?{...site,beach:false}:site),
+    ...Object.entries(layout.berths).filter(([kind])=>kind==='pier'||kind==='marina').map(([kind,site])=>
+      ({...regionalPoint(site,0,1.35),yaw:site.yaw,halfWidth:kind==='marina'?3.75:2.15,halfDepth:4.85})),
+  ];
+  const room=point=>{
+    const tile=regionSurface(layout,point.x,point.z);
+    return !tile.water&&tile.bank>.69&&tile.volcanic===undefined
+      &&buildings.every(site=>!regionalFootprint(site,point.x,point.z,SHORE_WALK_HALF_WIDTH+.35));
+  };
+  const samples=Array.from({length:125},(_,i)=>{
+    const heading=angle+(i-62)*.014;
+    const coast=islandCoastPoint(layout,heading);
+    return [1.3,1.65,2,2.35,2.8,3.2,3.7,4.3,5,5.8,6.5,7.3,8.2,9.2,10.3,11.5,13,14.5,16,17.5,19,20.5,22,23.5,25,26.5].flatMap(setback=>{
+      const point={x:coast.x-Math.sin(heading)*setback,z:coast.z-Math.cos(heading)*setback};
+      return room(point)?[{...point,setback}]:[];
+    });
+  });
+  // Pick a continuous route through the coastal band. Looking ahead lets it
+  // bend gradually around the resort and lighthouses.
+  let previous=[];
+  const walks=[];
+  for (const choices of samples) {
+    const options=choices.map(point=>{
+      const onBeach=beach&&regionalFootprint(beach,point.x,point.z);
+      const penalty=.37*Math.abs(point.setback-7.8)+(onBeach?5:0);
+      let best={score:Infinity};
+      for (const from of previous) {
+        const gap=distance(from.point,point);
+        if (gap>2.65||!room({x:mix(from.point.x,point.x,.5),z:mix(from.point.z,point.z,.5)})) continue;
+        const score=from.score+penalty+Math.abs(from.point.setback-point.setback)*1.45;
+        if (score<best.score) best={score,from};
+      }
+      return {point,penalty,...best};
+    });
+    const connected=options.filter(option=>option.from);
+    if (connected.length) previous=connected;
+    else {
+      if (previous.length) walks.push(previous.reduce((best,option)=>option.score<best.score?option:best));
+      previous=options.map(option=>({...option,score:option.penalty}));
+    }
+  }
+  if (previous.length) walks.push(previous.reduce((best,option)=>option.score<best.score?option:best));
+  const longest=walks.map(end=>{
+    const path=[];
+    for (let node=end;node;node=node.from) path.push(node.point);
+    return path.reverse();
+  }).reduce((best,path)=>path.length>best.length?path:best,[]);
+  return longest.length>=5?[longest]:[];
 }
 
 export function resortShore(layout,site,x) {
@@ -249,15 +305,40 @@ function lunarResortDistrict(layout) {
   return {site,lake:{...lake,y:Math.max(-.42,y-.29),yaw:site.yaw,halfWidth:w*1.04,halfDepth:d*1.08}};
 }
 
+function woodCoasterDistrict(layout) {
+  const {halfWidth,halfDepth}=WOOD_COASTER_PLOT;
+  const reserved=[...layout.regionalSites,...Object.values(layout.berths)];
+  const conflicts=(site,other)=>{
+    const clearance=other.beach?28:other.airportDistrict?29:other.span?21:other.waterfront?18:24;
+    return distance(site,other)<clearance;
+  };
+  const candidates=[];
+  for (let i=0;i<64;i++) {
+    const angle=layout.phase+i*2.399963;
+    const yaw=Math.round((angle+Math.PI)/(Math.PI/2))*Math.PI/2;
+    for (const reach of [33,42,50,57]) {
+      const point=polar(angle,reach);
+      const site={...point,yaw,halfWidth,halfDepth,coasterPark:true};
+      if (reserved.some(neighbor=>conflicts(site,neighbor))) continue;
+      const ground=districtGround(layout,site,halfWidth,halfDepth);
+      if (!ground.dry||ground.grade>2.1) continue;
+      const entry=regionalPoint(site,0,halfDepth+2.5);
+      const front=regionSurface(layout,entry.x,entry.z);
+      if (front.water||front.volcanic!==undefined||Math.abs(front.y-ground.y)>1.65) continue;
+      const score=ground.grade*3+Math.abs(reach-37)*.23+i*.015;
+      candidates.push({site:{...site,y:ground.y},score});
+    }
+  }
+  return candidates.reduce((best,entry)=>!best||entry.score<best.score?entry:best,null)?.site;
+}
+
 export function regionalAnnex(layout,kind) {
   if (kind==='lighthouse'||kind==='stoneLighthouse') return layout.berths[kind];
   if (kind==='hangar') return layout.hangar;
   if (kind==='megaResort') return layout.beachResort;
   if (kind==='lunarResort') return layout.spaceResort;
-  if (kind==='shoreWalk'&&layout.beachResort) {
-    const site=layout.beachResort;
-    return {...site,...regionalPoint(site,9,12),beach:false,waterfront:true,halfWidth:0,halfDepth:0};
-  }
+  if (kind==='woodCoaster') return layout.woodCoaster;
+  if (kind==='shoreWalk') return layout.shoreWalkSite;
   if (kind==='riverWalk') {
     const bridge=layout.berths.bridge,side=Math.sign(layout.origin.x-riverAt(layout,layout.origin.z))||1;
     return {x:bridge.x+side*(riverWidth(layout,bridge.z)+2.65),z:bridge.z,y:.35,yaw:0,waterfront:true};
@@ -353,6 +434,19 @@ export function regionLayout(theme,seed,grand=false,capacity=grand?GRAND_REGION_
   }
   layout.regionalSites=[layout.airfield,layout.hangar,layout.beachResort,layout.spaceResort,layout.moonLake,layout.volcano,
     berths.lighthouse,berths.stoneLighthouse].filter(Boolean);
+  if (grand&&theme!=='moon') {
+    layout.woodCoaster=woodCoasterDistrict(layout);
+    if (layout.woodCoaster) layout.regionalSites.push(layout.woodCoaster);
+  }
+  if (grand&&theme==='island') {
+    const coastWalk=islandPromenade(layout);
+    const front=islandCoastPoint(layout,layout.beachResort?.yaw??layout.phase,5.8);
+    const middle=coastWalk.flat().reduce((best,point)=>distance(point,front)<distance(best,front)?point:best,coastWalk[0]?.[0]??front);
+    layout.shoreWalkSite={x:middle.x,z:middle.z,y:regionSurface(layout,middle.x,middle.z).y,yaw:0,waterfront:true};
+    layout.shoreWalk=coastWalk;
+    const segments=coastWalk.flatMap(path=>path.slice(1).map((point,i)=>[path[i],point]));
+    layout.shoreWalkNear=transportCorridor(segments,SHORE_WALK_LOT_GAP+.4);
+  }
   const grid=Array.from({length:GRID*GRID},(_,i)=>{
     const x=i%GRID*STEP-EDGE,z=Math.floor(i/GRID)*STEP-EDGE;
     const sample=regionSurface(layout,x,z);
@@ -443,6 +537,7 @@ function ordinaryEntrance(site,target) {
 
 export function specialEntrances(site,kind) {
   if (site.airportDistrict) return [regionalPoint(site,0,site.airfield?8.9:6.05)];
+  if (site.coasterPark) return [regionalPoint(site,0,site.halfDepth+2.5)];
   if (site.beach) return [regionalPoint(site,0,-8.1)];
   if (site.spaceResort) return [regionalPoint(site,-5.4,8.25)];
   if (kind==='bridge') return [-1,1].map(side=>({x:site.x+side*site.span*.5,y:site.y+.514,z:site.z}));
@@ -516,7 +611,8 @@ export function connectWaterfront(layout,start,end,bankOnly=false) {
 
 export function planRegion(layout,buildings) {
   const {origin,berths}=layout;
-  const sites=layout.sites.filter(({x,z})=>!layout.regionalSites.some(site=>regionalFootprint(site,x,z,5.4)));
+  const sites=layout.sites.filter(({x,z})=>!layout.regionalSites.some(site=>regionalFootprint(site,x,z,5.4))
+    &&!(layout.shoreWalkNear?.(x,z)?.gap<SHORE_WALK_LOT_GAP));
   const root={x:origin.x,z:origin.z+7.4};
   const network=[root];
   const paths=[];
@@ -568,6 +664,7 @@ export function regionVisibility(plan,x,z,full=false) {
       reach=Math.max(reach,1-(distanceTo(plan.transit[i])-3.7)/12);
     }
   }
+  if (plan.shoreWalkNear) reach=Math.max(reach,1-(plan.shoreWalkNear(x,z)?.gap??15)/15);
   for (const portal of plan.transitPortals??[]) reach=Math.max(reach,1-(distanceTo(portal)-7)/9);
   reach=clamp(reach,0,1);
   return Math.max(developed,.8*reach*reach*(3-2*reach)+.2*reach);

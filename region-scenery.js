@@ -1,6 +1,6 @@
 import {box,dome,tube,beam,pointOnSite,placeParts,regionActors,parkingTours,serviceDriveways,driveThroughApproach,actor,visitor,MAX_ACTORS,isCarWash,washBubbles} from './scenery.js';
-import {regionLayout,planRegion,riverAt,riverWidth,resortShore,islandPromenadePoint,regionalPoint,regionVisibility,regionSurface,roadElevation,regionalFootprint,residenceDrive,RESIDENCE_PLOT} from './regions.js';
-import {REGION_PLACES,WORLD_BUILD_STEPS,grandCatalog,hasExpandedCatalog,randomGenerator,worldStatus} from './worlds.js';
+import {regionLayout,planRegion,riverAt,riverWidth,islandCoastPoint,regionVisibility,regionSurface,roadElevation,regionalFootprint,residenceDrive,transportCorridor,RESIDENCE_PLOT,SHORE_WALK_HALF_WIDTH} from './regions.js';
+import {REGION_PLACES,RESIDENCE_PLACE,WORLD_BUILD_STEPS,grandCatalog,hasExpandedCatalog,randomGenerator,worldStatus} from './worlds.js';
 import {planStreetRegion} from './street-grid.js';
 import {prepareRoadGrades,prepareRoadTunnels,regionRoads,streetHalfWidth} from './region-roads.js';
 import {roadProjections} from './street-network.js';
@@ -15,7 +15,7 @@ import {terrainDiscoveries,discoveryGuides,mineTerrain} from './map-discoveries.
 
 const SHADES={
   city:{ground:'#93ae77',shade:'#628c68',high:'#b2bd81',bank:'#c6c295',deep:'#5a93a8',shallow:'#85c5bf'},
-  island:{ground:'#9ab980',shade:'#659570',high:'#bbc284',bank:'#ead1a1',deep:'#4d9eac',shallow:'#91d3c4'},
+  island:{ground:'#9ab980',shade:'#659570',high:'#bbc284',bank:'#ead1a1',deep:'#478f9f',shallow:'#86ccba'},
   moon:{ground:'#9f9eb8',shade:'#737492',high:'#c1b6c8',bank:'#b3abc5',deep:'#6d789e',shallow:'#9eabc9'},
 };
 const clamp=(v,min=0,max=1)=>Math.max(min,Math.min(max,v));
@@ -73,6 +73,14 @@ function smooth(value) {
   return t*t*(3-2*t);
 }
 
+function islandVisibility(layout,x,z,tile,development,horizon=0) {
+  const range=Math.hypot(x,z);
+  const rim=122+17*horizon+4*Math.sin(Math.atan2(x,z)*4+layout.phase);
+  const edge=smooth((rim+18-range)/49);
+  const coastal=tile.pond?.38:.39+.49*smooth((14-tile.bank)/17);
+  return Math.max(development,coastal*edge);
+}
+
 function distantRelief(layout) {
   const rng=randomGenerator(layout.seed^0x18a32df7);
   const theme=layout.theme;
@@ -116,7 +124,8 @@ function distantRelief(layout) {
 function regionGround(layout,plan,sky,full,horizon,season,discoveries) {
   const background=rgb(sky);
   const inner=Math.sqrt(layout.grid.length);
-  const extension=[3,7,12,18,25,33,42,51];
+  const island=layout.theme==='island';
+  const extension=island?[3,7,12,18,25,33,42,51,63,76]:[3,7,12,18,25,33,42,51];
   const extra=extension.length,row=inner+2*extra;
   const edge=layout.grid[inner-1].x;
   const coords=[...extension.map(distance=>-edge-distance).reverse(),...layout.grid.slice(0,inner).map(tile=>tile.x),
@@ -129,8 +138,10 @@ function regionGround(layout,plan,sky,full,horizon,season,discoveries) {
   const mines=discoveries.filter(site=>site.type.mine);
   const lake=layout.moonLake,reach=lake&&lake.w*1.17+3;
   const outerRoads=horizon?[...plan.paths.flat(),...(plan.transit??[])].filter(p=>Math.max(Math.abs(p.x),Math.abs(p.z))>59):[];
-  const apronSites=airfields.map(site=>({...site,c:Math.cos(site.yaw),s:Math.sin(site.yaw),
-    width:site.airfield?12.4:site.halfWidth+.75,depth:site.airfield?8.4:site.halfDepth+.75}));
+  const coaster=plan.plots.find(plot=>plot.coasterPark);
+  const apronSites=[...airfields,...(coaster?[coaster]:[])].map(site=>({...site,c:Math.cos(site.yaw),s:Math.sin(site.yaw),
+    width:site.airfield?12.4:site.halfWidth+(site.coasterPark?.16:.75),
+    depth:site.airfield?8.4:site.halfDepth+(site.coasterPark?.16:.75)}));
   const cutAprons=(x,z)=>apronSites.flatMap(site=>{
     const a=x-site.x,b=z-site.z;
     if (Math.abs(a)>19||Math.abs(b)>19) return [];
@@ -144,7 +155,9 @@ function regionGround(layout,plan,sky,full,horizon,season,discoveries) {
     const rim=smooth((radius-distance)/38);
     const airfieldReach=airfields.reduce((reach,site)=>Math.max(reach,smooth((23-Math.hypot(x-site.x,z-site.z))/8)),0);
     const edgeFade=Math.max(smooth((radius+15-distance)/21),airfieldReach);
-    const visibility=edgeFade*Math.max((.24+.57*horizon)*rim,regionVisibility(plan,x,z,full));
+    const development=regionVisibility(plan,x,z,full);
+    const visibility=island?islandVisibility(layout,x,z,tile,development*edgeFade,horizon)
+      :edgeFade*Math.max((.24+.57*horizon)*rim,development);
     let base=surfaceColor(tile,layout,season);
     if (resort&&!tile.water) {
       const a=x-resort.x,b=z-resort.z,c=Math.cos(resort.yaw),s=Math.sin(resort.yaw);
@@ -194,21 +207,21 @@ function regionGround(layout,plan,sky,full,horizon,season,discoveries) {
     const volcano=layout.volcano;
     const volcanoCell=volcano&&volcano.x>a.point[0]-13&&volcano.x<b.point[0]+13
       &&volcano.z>a.point[2]-13&&volcano.z<c.point[2]+13;
-    const airfieldCell=airfields.some(site=>{
-      const extent=site.airfield?18:12;
+    const apronCell=apronSites.some(site=>{
+      const extent=site.airfield||site.coasterPark?18:12;
       return site.x>a.point[0]-extent&&site.x<b.point[0]+extent
         &&site.z>a.point[2]-extent&&site.z<c.point[2]+extent;
     });
-    if (!nearby.length&&!lakeCell&&!volcanoCell&&!airfieldCell) {
+    if (!nearby.length&&!lakeCell&&!volcanoCell&&!apronCell) {
       addTriangle([a,c,b]); addTriangle([b,c,d]);
       continue;
     }
     const refined=Array.from({length:25},(_,j)=>{
       const u=(j%5)/4,v=Math.floor(j/5)/4;
       const x=lerp(a.point[0],b.point[0],u),z=lerp(a.point[2],c.point[2],v);
-      const tile=lakeCell||volcanoCell||airfieldCell?regionSurface(layout,x,z):null;
+      const tile=lakeCell||volcanoCell||apronCell?regionSurface(layout,x,z):null;
       const innerPoint=j%5>0&&j%5<4&&j>=5&&j<20;
-      if (tile&&(innerPoint||airfieldCell&&cutAprons(x,z).length)) return vertex(x,z,tile);
+      if (tile&&(innerPoint||apronCell&&cutAprons(x,z).length)) return vertex(x,z,tile);
       const base=lerp(lerp(a.point[1],b.point[1],u),lerp(c.point[1],d.point[1],u),v);
       const offset=nearby.reduce((height,site)=>height+mineTerrain(site,x,z),0);
       const color=blend(blend(a.color,b.color,u),blend(c.color,d.color,u),v);
@@ -319,9 +332,9 @@ function landscapeDetails(layout,plan,full,sky,season,finds) {
   for (const {x,z,seed:spotSeed} of spread) {
     if (finds.some(site=>Math.hypot(x-site.x,z-site.z)<3.45)) continue;
     const visibility=regionVisibility(plan,x,z,full);
-    if (visibility<.27) continue;
-    const random=randomGenerator(spotSeed);
     const tile=regionSurface(layout,x,z);
+    if (visibility<.27||(theme==='island'&&tile.water&&!tile.pond)) continue;
+    const random=randomGenerator(spotSeed);
     const ground=groundLevel(plan,x,z,tile.y);
     if (tile.moonLake&&tile.bank<.55) continue;
     if (tile.volcanic<.71) continue;
@@ -331,6 +344,7 @@ function landscapeDetails(layout,plan,full,sky,season,finds) {
       continue;
     }
     if (plan.plots.some(plot=>plot.halfWidth&&regionalFootprint(plot,x,z,1.3))
+      ||layout.shoreWalkNear?.(x,z)?.gap<SHORE_WALK_HALF_WIDTH+.75
       ||plan.footpaths?.some(path=>path.some(point=>Math.hypot(x-point.x,z-point.z)<1.1))) continue;
     if (plan.plots.some(plot=>plot.beach&&Math.hypot(x-plot.x,z-plot.z)<24&&tile.bank<9.8)) continue;
     if (tile.bank>1.35 && visibility>.38) {
@@ -362,6 +376,27 @@ function landscapeDetails(layout,plan,full,sky,season,finds) {
   return marks;
 }
 
+function islandWaterTexture(layout,sky) {
+  const rng=randomGenerator(layout.seed^0x2cabef39);
+  return Array.from({length:138},(_,i)=>{
+    const angle=(i+rng())*2.399963;
+    const shallows=i%3===0;
+    const {x,z}=islandCoastPoint(layout,angle,-(shallows?1.2+rng()*4.5:5+rng()*43));
+    const tile=regionSurface(layout,x,z);
+    if (!tile.water||tile.pond) return [];
+    const fog=1-islandVisibility(layout,x,z,tile,0);
+    const before=islandCoastPoint(layout,angle-.012),after=islandCoastPoint(layout,angle+.012);
+    const yaw=shallows?Math.atan2(before.z-after.z,after.x-before.x):-.56+rng()*.35;
+    const span=(shallows?1.5:1.2)+rng()*2.9;
+    const source=[[-span*.5,-.04],[-span*.07,.155],[span*.5,.015],[span*.03,-.085]];
+    const y=tile.y+.024;
+    const outline=source.map(([u,v])=>pointOnSite([u,0,v],{x,y,z,yaw}));
+    if (outline.some(([a,,b])=>!regionSurface(layout,a,b).water)) return [];
+    const shade=blend(rgb(sky),rgb(shallows?'#e0efcf':'#a0c7bf'),(1-fog)*(shallows?.82:.68));
+    return [face(outline,sky,2,outline.map(()=>shade))];
+  }).flat();
+}
+
 function seasonalDetails(layout,plot,season) {
   if (!season||plot.waterfront||plot.index%3!==0) return [];
   const [x,,z]=pointOnSite([plot.index%2?4.76:-4.76,0,4.7],plot);
@@ -386,12 +421,14 @@ function seasonalDetails(layout,plot,season) {
   ]);
 }
 
-function viewBounds(plan,horizon) {
+function viewBounds(plan,horizon,island=false) {
   const points=[plan.origin,...plan.plots,...plan.paths.flat(),...(plan.transit??[])];
   const xs=points.map(p=>p.x),zs=points.map(p=>p.z);
   const left=Math.min(...xs),right=Math.max(...xs),back=Math.min(...zs),front=Math.max(...zs);
-  return {anchorX:(left+right)*.5*(1-horizon),anchorZ:(back+front)*.5*(1-horizon),
-    size:lerp(Math.max(78,Math.hypot(right-left,front-back)*.91+39),238,horizon)};
+  const framed=Math.hypot(right-left,front-back)*.91+39;
+  const centering=(1-horizon)*(island?.87:1);
+  return {anchorX:(left+right)*.5*centering,anchorZ:(back+front)*.5*centering,
+    size:lerp(Math.max(island?106:78,framed)+(island?14:0),island?253:238,horizon)};
 }
 
 function walkLine(a,b,step=.85) {
@@ -505,72 +542,80 @@ function pocketParks(layout,plan,completed,finds) {
 
 function promenade(layout,plan,plot,phase) {
   const island=plot.kind==='shoreWalk';
-  const resort=layout.beachResort;
   const bridge=layout.berths.bridge;
-  const roadside=(x,z)=>roadProjections(plan.paths,{x,z},2).length>0;
-  const points=Array.from({length:65},(_,i)=>{
-    const along=(i-32)*.9;
-    let point;
-    if (island) {
-      if (!resort) return null;
-      const shore=resortShore(layout,resort,along);
-      point=islandPromenadePoint(layout,resort,along);
-      if (Math.abs(along)<9&&shore!==null) {
-        const link=regionalPoint(resort,along,Math.max(7,shore-4.3));
-        if (regionSurface(layout,link.x,link.z).bank>1.55&&Math.hypot(point.x-link.x,point.z-link.z)<4) {
-          const weight=1-Math.abs(along)/9;
-          point={x:lerp(point.x,link.x,weight),z:lerp(point.z,link.z,weight)};
+  const side=island?0:Math.sign(plot.x-riverAt(layout,plot.z))||1;
+  const trace=island?(layout.shoreWalk??[]):[Array.from({length:65},(_,i)=>{
+    const z=bridge.z+(i-32)*.9;
+    return {x:riverAt(layout,z)+side*(riverWidth(layout,z)+2.65),z};
+  })];
+  const half=island?SHORE_WALK_HALF_WIDTH:.95;
+  const hasBridge=!island&&plan.plots.some(site=>site.kind==='bridge');
+  const alongRoad=point=>roadProjections(plan.paths,point,streetHalfWidth(layout.theme)+.12).length>0;
+  const paths=trace.flatMap(raw=>{
+    const pieces=[[]];
+    for (const point of raw) {
+      const {x,z}=point,tile=regionSurface(layout,x,z);
+      const occupied=!island&&plan.plots.some(other=>other!==plot&&!other.waterfront
+        &&(other.halfWidth?regionalFootprint(other,x,z,.9):Math.hypot(x-other.x,z-other.z)<6));
+      if (tile.water||occupied) {
+        if (pieces.at(-1).length) pieces.push([]);
+        continue;
+      }
+      const riverBridge=hasBridge&&Math.abs(z-bridge.z)<1.6;
+      const crossing=alongRoad(point)||riverBridge;
+      const deck=groundLevel(plan,x,z,tile.y)+.18;
+      const y=riverBridge?bridge.y+.534:crossing?(plan.streetElevation?.(x,z)??deck)+.027:deck;
+      pieces.at(-1).push({x,y,z,crossing});
+    }
+    return pieces.filter(path=>path.length>=3);
+  });
+  const parts=[],walkers=[];
+  for (const [k,path] of paths.entries()) {
+    const crossSections=path.map((point,i)=>{
+      const prev=path[Math.max(0,i-1)],next=path[Math.min(path.length-1,i+1)];
+      const yaw=Math.atan2(next.x-prev.x,next.z-prev.z);
+      return {...point,yaw,left:pointOnSite([-half,0,0],{...point,yaw}),right:pointOnSite([half,0,0],{...point,yaw})};
+    });
+    for (const [i,p] of crossSections.entries()) {
+      const next=crossSections[i+1];
+      const local=(x,y,z)=>pointOnSite([x,y,z],p);
+      if (next) {
+        const crossing=p.crossing&&next.crossing;
+        if (crossing) {
+          const stripe=(a,b)=>a.map((value,j)=>lerp(value,b[j],.36));
+          parts.push(face([p.left,stripe(p.left,next.left),stripe(p.right,next.right),p.right],'#ecdbaf',3.75));
+        } else {
+          const shade=phase>1&&i%3===0?'#d4af82':island?'#bd946a':'#c4b99d';
+          parts.push(face([p.left,next.left,next.right,p.right],shade,3.75));
+          if (phase>1&&island&&!p.crossing&&!next.crossing) for (const side of ['left','right']) {
+            parts.push(beam(p[side],next[side],.083,'#9a734e'));
+          }
         }
       }
-    } else {
-      const z=bridge.z+along,side=Math.sign(plot.x-riverAt(layout,plot.z))||1;
-      point={x:riverAt(layout,z)+side*(riverWidth(layout,z)+2.65),z};
-    }
-    const {x,z}=point,tile=regionSurface(layout,x,z);
-    if (tile.water||island&&tile.bank<1.55||plan.plots.some(other=>other!==plot&&other!==resort&&!other.waterfront
-      &&(other.halfWidth?regionalFootprint(other,x,z,.9):Math.hypot(x-other.x,z-other.z)<6))) return null;
-    const crossing=roadside(x,z);
-    const riverBridge=!island&&plan.plots.some(site=>site.kind==='bridge')&&Math.abs(z-bridge.z)<1.6;
-    const y=riverBridge?bridge.y+.53:crossing?(plan.streetElevation?.(x,z)??tile.y)+.016:tile.y+.14;
-    return {...point,y,crossing:crossing||riverBridge};
-  });
-  const paths=[];
-  for (const p of points) {
-    if (!p) { if (paths.at(-1)?.length) paths.push([]); continue; }
-    if (!paths.length) paths.push([]);
-    if (paths.at(-1).length&&Math.hypot(p.x-paths.at(-1).at(-1).x,p.z-paths.at(-1).at(-1).z)>3) paths.push([]);
-    paths.at(-1).push(p);
-  }
-  const parts=[],walkers=[];
-  const service=paths.filter(path=>path.length>=3);
-  for (const [k,path] of service.entries()) {
-    for (const [i,p] of path.entries()) {
-      const prev=path[Math.max(0,i-1)],next=path[Math.min(path.length-1,i+1)];
-      const angle=Math.atan2(next.x-prev.x,next.z-prev.z);
-      const point=(x,y,z)=>pointOnSite([x,y,z],{...p,yaw:angle});
-      if (p.crossing) continue;
-      const span=(Math.hypot(p.x-prev.x,p.z-prev.z)+Math.hypot(p.x-next.x,p.z-next.z))*.5+.15;
-      const deck=phase>1&&i%3===0?'#d1a77a':island?'#b89369':'#c4b99d';
-      parts.push(face([point(-.95,0,-span/2),point(-.95,0,span/2),point(.95,0,span/2),point(.95,0,-span/2)],deck,3.75));
-      if (phase>1&&i%6===0) {
-        const [x,y,z]=point(.81,0,0);
-        parts.push(tube(x,z,.08,.08,.79,'#627370',y),dome(x,z,.24,.24,.24,'#f7db96',y+.78));
+      if (phase>1&&!p.crossing&&i%8===1) {
+        const [x,y,z]=local(.89,0,0);
+        parts.push(tube(x,z,.095,.095,.91,'#627370',y),dome(x,z,.27,.27,.24,'#f7db96',y+.88));
       }
-      if (phase>2&&i%11===4) {
-        const [x,y,z]=point(-.71,0,0);
-        parts.push(...placeParts([box(0,0,.39,.98,.11,'#9f7251',.22),box(-.13,0,.09,.98,.26,'#9f7251',.32)],{x,y,z,yaw:angle}));
+      if (phase>2&&!p.crossing&&i%13===5) {
+        const [x,y,z]=local(-.83,0,0);
+        parts.push(...placeParts([box(0,0,.45,.99,.11,'#a17554',.22),box(-.16,0,.09,.99,.27,'#a17554',.32),
+          ...[-.34,.34].map(z=>box(0,z,.26,.10,.22,'#776758'))],{x,y,z,yaw:p.yaw}));
       }
     }
     if (phase===3&&path.length>=7&&walkers.length<4) {
-      const length=path.length-1;
-      for (let i=0;i<(length>18?2:1);i++) {
-        const step=i*.44+k*.13;
-        walkers.push({kind:'walk',promenade:true,characterSlot:940+k*2+i,voice:'people',
-          parts:visitor('human',i?'#b57779':'#589c93',undefined,false,.83,i),
+      const lengths=[0];
+      for (let i=1;i<path.length;i++) lengths.push(lengths[i-1]+Math.hypot(path[i].x-path[i-1].x,path[i].z-path[i-1].z));
+      const length=lengths.at(-1),count=island?Math.min(4,Math.max(2,Math.floor(length/31))):path.length>18?2:1;
+      for (let i=0;i<count;i++) {
+        const start=((i+.25)/count+k*.13)*length+(i%2)*length;
+        walkers.push({kind:'walk',promenade:true,characterSlot:940+k*4+i,voice:'people',
+          parts:visitor('human',['#589c93','#b57779','#d59f68','#788cb1'][i],undefined,false,.83,i),
           pose(seconds){
-            const clock=seconds*1.02+step*length,position=clock%(length*2);
+            const clock=seconds*(.89+i*.042)+start,position=clock%(length*2);
             const distance=position<=length?position:length*2-position;
-            const j=Math.min(length-1,Math.floor(distance)),p=path[j],q=path[j+1],t=distance-j;
+            const next=lengths.findIndex(span=>span>distance);
+            const j=(next<0?path.length-1:next)-1,p=path[j],q=path[j+1];
+            const t=(distance-lengths[j])/(lengths[j+1]-lengths[j]);
             const yaw=Math.atan2(q.x-p.x,q.z-p.z)+(position>length?Math.PI:0);
             return {x:lerp(p.x,q.x,t),y:lerp(p.y,q.y,t)+.045,z:lerp(p.z,q.z,t),cos:Math.cos(yaw),sin:Math.sin(yaw),
               stride:Math.sin(seconds*8)*.15,rollCos:1,rollSin:0,sound:0};
@@ -578,7 +623,7 @@ function promenade(layout,plan,plot,phase) {
       }
     }
   }
-  return {parts,walkers};
+  return {parts,walkers,paths};
 }
 
 const PHASES=['grunnarbeid','form og fasade','siste detaljer'];
@@ -652,7 +697,14 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
       .flatMap(part=>terrainFoundation(layout,part,map.seed)).map(part=>({...part,entity:'headquarters'})));
   }
   const parks=pocketParks(layout,{...plan,plots:sceneryPlan.plots},completedPlots,discoveries.sites);
-  plan.footpaths=[...parks.paths,...(rail?.walkways??[])];
+  const walks=new Map(developments.flatMap(({plot},i)=>{
+    if (plot.kind!=='shoreWalk'&&plot.kind!=='riverWalk') return [];
+    return [[plot,promenade(layout,plan,plot,Math.min(WORLD_BUILD_STEPS,map.progress-i*WORLD_BUILD_STEPS))]];
+  }));
+  const withPromenade=[...walks.keys()].some(plot=>plot.kind==='shoreWalk');
+  const coastalPaths=[...walks].flatMap(([plot,walk])=>plot.kind==='shoreWalk'?walk.paths:[]);
+  if (coastalPaths.length) plan.shoreWalkNear=transportCorridor(coastalPaths.flatMap(path=>path.slice(1).map((p,i)=>[path[i],p])),15);
+  plan.footpaths=[...parks.paths,...(rail?.walkways??[]),...[...walks.values()].flatMap(walk=>walk.paths)];
   const waterCovers=[...(rail?.waterCovers??[])];
   const suspension=completedPlots.find(plot=>plot.kind==='bridge');
   if (suspension) {
@@ -666,6 +718,7 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
     ...regionGround(layout,plan,sky,status.full,horizon,season,discoveries.sites),
     ...roads,
     ...tunnels,
+    ...(id==='island'?islandWaterTexture(layout,sky):[]),
     ...landscapeDetails(layout,plan,status.full,sky,season,discoveries.sites),
     ...discoveries.parts,...parks.parts,
   ];
@@ -675,14 +728,14 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
   developments.forEach(({plot,steps},i)=>{
     const amount=Math.min(WORLD_BUILD_STEPS,map.progress-i*WORLD_BUILD_STEPS);
     const {name}=buildingInfo(plot.index);
-    const isPromenade=plot.kind==='shoreWalk'||plot.kind==='riverWalk';
+    const walking=walks.get(plot),isPromenade=Boolean(walking);
     const height=isPromenade?2:Math.max(...steps.flatMap(step=>step.map(part=>part.y+part.h)));
     const done=amount===WORLD_BUILD_STEPS;
     latestTarget={...plot,height};
     sites[plot.index]={...latestTarget,built:done};
-    const walking=isPromenade?promenade(layout,plan,plot,amount):null;
     if (walking) promenadeWalkers.push(...walking.walkers);
-    const shadow=plot.waterfront||isPromenade?[]:groundShadow(layout,plan,plot.x+1.92,plot.z-1.47,7.35,6.18,amount===1?.15:.27,12,season);
+    const shadow=plot.waterfront||isPromenade?[]:groundShadow(layout,plan,plot.x+1.92,plot.z-1.47,
+      plot.coasterPark?11.8:7.35,plot.coasterPark?8.7:6.18,amount===1?.15:.27,12,season);
     parts.push(...shadow);
     if (walking) {
       latest=walking.parts.map(part=>({...part,landmark:plot.index}));
@@ -731,7 +784,7 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
         }
       }
       if (plot.beach) {
-        const beach=resortBeach(layout,plot);
+        const beach=resortBeach(layout,plot,withPromenade);
         parts.push(...beach.parts.map(part=>({...part,landmark:plot.index})));
         beachSwimmers.push(...beach.swimmers);
       }
@@ -752,10 +805,16 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
   const journeys=residentJourneys(layout,plan,residents,rail?.passengerService,bus);
   const primaryTours=[...new Map(parkedTours.slice().reverse().map(actor=>[actor.parking.plot,actor])).values()];
   const roadQuota=id==='moon'?17:20;
+  // Coast life stays visible when a mature city fills the animation budget.
+  const coast=locals.filter(actor=>actor.coastal);
+  const islandTours=primaryTours.filter(actor=>actor.carWash||actor.parking.plot===RESIDENCE_PLACE);
+  const localBus=bus?.vehicle??locals.find(actor=>actor.islandVehicle==='bus');
+  const islandBus=id==='island'&&localBus?[localBus]:[];
   const essential=[...rides.filter(actor=>actor.kind==='observation'||actor.kind==='wheel'),...(rail?.actors??[]),...roadworks.crews,
-    ...primaryTours.filter(actor=>actor.service),...helicopter,...craft.slice(0,5),...beachSwimmers,...rides.filter(actor=>actor.dustBather),...primaryTours,
-    ...street.slice(0,roadQuota),...promenadeWalkers.slice(0,2),...(journeys.some(person=>person.busJourney)?[bus.vehicle]:[]),...journeys.slice(0,4),...(rail?.walkers??[]),...journeys.slice(4),...promenadeWalkers.slice(2),
-    ...parkedTours.filter(actor=>actor.parking.merge),...speakers,
+    ...primaryTours.filter(actor=>actor.service),...helicopter,...craft.slice(0,5),...beachSwimmers.slice(0,2),...rides.filter(actor=>actor.dustBather||actor.woodCoaster),
+    ...coast,...(id==='island'?islandTours:primaryTours),...islandBus,...parks.walks.slice(0,1),...promenadeWalkers.slice(0,2),
+    ...street.slice(0,roadQuota),...(journeys.some(person=>person.busJourney)?[bus.vehicle]:[]),...journeys.slice(0,4),...(rail?.walkers??[]),...journeys.slice(4),
+    ...beachSwimmers.slice(2),...promenadeWalkers.slice(2),...primaryTours,...parkedTours.filter(actor=>actor.parking.merge),...speakers,
     ...(discoveries.visitor?[discoveries.visitor]:[]),...discoveries.smoke,
     ...parks.walks,...locals.filter(actor=>actor.driveThrough||actor.offroadExplorer||['bus','offroad-rover','hover'].includes(actor.kind))];
   const football=rides.filter(actor=>actor.footballPlayer||actor.kind.startsWith('football-'));
@@ -768,7 +827,7 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
   const keep=part=>!visiting.has(part.entity)&&!moving.has(part.parking)&&!((part.observation||part.wheel)&&rotating.has(part.landmark));
   return {
     id,seed:map.seed,residenceName:map.residenceName,junctions:plan.junctions,discoveries:{...discoveries.info,...rail?.entries},parts:parts.filter(keep),latest:latest.filter(keep),last,finished,landmarks,sites,roadBuild,latestTarget,world:true,illustrated:true,background:sky,yaw:-Math.PI/4,pitch:.6155,center:1.1,closeSize:76,
-    ...viewBounds({...plan,transit:id==='city'?plan.transit:plan.transit?.filter(point=>Math.hypot(point.x-plan.origin.x,point.z-plan.origin.z)<55)},horizon),
+    ...viewBounds({...plan,transit:id==='city'?plan.transit:plan.transit?.filter(point=>Math.hypot(point.x-plan.origin.x,point.z-plan.origin.z)<55)},horizon,id==='island'),
     soundscape:{buildings:completedPlots.length},
     ambient,roadworks:roadworks.sites,waterCovers,
     trafficObstacles:discoveries.sites.map(({x,z,type})=>({x,z,radius:type.mine?4.8:3.9})),
