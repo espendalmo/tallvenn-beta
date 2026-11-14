@@ -570,7 +570,8 @@ export function projectCameras(scene,target=null,focusLatest=false,{compact=fals
   const height=point.height??6;
   const largeStation=point.kind==='railwayStation'||point.kind==='monorailStation';
   const lake=point.spaceResort?scene.discoveries?.['moon-lake']:null;
-  const framing=point.beach?44:point.airfield?39:lake?38:point.kind==='residence'?(point.residence?22.5:18.5)
+  const promenade=point.kind==='riverWalk'||point.kind==='shoreWalk';
+  const framing=promenade?51:point.beach?44:point.airfield?39:lake?38:point.kind==='residence'?(point.residence?22.5:18.5)
     :(largeStation?28:point.kind==='tramStation'?23:height*1.13+3.2)*(compact?.91:1);
   const anchorX=point.x+(lake?(lake.x-point.x)*.26:point.beach?Math.sin(point.yaw)*5:0);
   const anchorZ=point.z+(lake?(lake.z-point.z)*.26:point.beach?Math.cos(point.yaw)*5:0);

@@ -9,7 +9,7 @@ export const GRAND_REGION_CATALOG=44;
 export const LUNAR_REGION_CATALOG=48;
 export const LARGE_REGION_PLACES=40;
 export const EXTENDED_REGION_PLACES=50;
-export const LARGE_REGION_CATALOG=54;
+export const LARGE_REGION_CATALOG=56;
 export const LARGE_LUNAR_CATALOG=57;
 // Keep saved residences separate from the expandable building catalogs.
 export const RESIDENCE_PLACE=1000;
@@ -91,12 +91,14 @@ export function worldChoices(map,theme,owner='') {
   const used=new Set([...finished,partial?.id,...map.order]);
   const pool=Array.from({length:worldPoolSize(map,theme)},(_,i)=>i).filter(id=>id!==RAIL_PLACE);
   if (hasRail(theme,map) && status.built>=2) pool.push(RAIL_PLACE);
-  const options=pool.filter(id=>!used.has(id));
+  const newLandmarks=grandCatalog(map)&&['city','island'].includes(theme)?[54,55]:[];
+  const options=pool.filter(id=>!used.has(id)&&!newLandmarks.includes(id));
   const rng=randomGenerator((map.seed??0x4fd37d89)+map.order.length*0x47c82f31+(map.legacy||0)*17);
   for (let i=options.length-1;i>0;i--) {
     const swap=Math.floor(rng()*(i+1));
     [options[i],options[swap]]=[options[swap],options[i]];
   }
+  options.push(...newLandmarks.filter(id=>!used.has(id)));
   if (isWorld(theme)&&isRegion(map)&&status.built>=2&&residenceName(owner)&&!used.has(RESIDENCE_PLACE)) {
     options.push(RESIDENCE_PLACE);
   }

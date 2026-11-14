@@ -399,27 +399,31 @@ function blockPerimeter(paths) {
   return loops;
 }
 
-function railDetour(lots,margin) {
+function railDetour(lots,margin,orthogonal=false) {
+  const cost=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1])+1.15*Math.min(Math.abs(a[0]-b[0]),Math.abs(a[1]-b[1]));
   const clear=(a,b)=>clearRail(lots,a,b,margin);
   const corners=lots.flatMap(lot=>{
     const {left,right,back,front}=lot,padding=railMargin(lot,margin)+.46;
     return [left-padding,right+padding].flatMap(x=>[back-padding,front+padding].map(z=>[x,z]));
   })
     .filter(point=>clear(point,point));
-  const distance=([x,z],[a,b])=>Math.hypot(x-a,z-b);
   const edges=corners.map(()=>[]);
   for (let i=0;i<corners.length;i++) {
     for (let j=i+1;j<corners.length;j++) {
       if (!clear(corners[i],corners[j])) continue;
-      const cost=distance(corners[i],corners[j]);
-      edges[i].push([j,cost]);
-      edges[j].push([i,cost]);
+      const length=cost(corners[i],corners[j]);
+      edges[i].push([j,length]);
+      edges[j].push([i,length]);
     }
   }
   return (from,to)=>{
+    for (const bend of orthogonal?[[to[0],from[1]],[from[0],to[1]]]:[]) {
+      if (Math.min(Math.abs(bend[0]-from[0])+Math.abs(bend[1]-from[1]),Math.abs(bend[0]-to[0])+Math.abs(bend[1]-to[1]))<.1) continue;
+      if (clear(from,bend)&&clear(bend,to)) return [bend,to];
+    }
     if (clear(from,to)) return [to];
-    const costs=corners.map(point=>clear(from,point)?distance(from,point):Infinity);
-    const last=corners.map(point=>clear(point,to)?distance(point,to):Infinity);
+    const costs=corners.map(point=>clear(from,point)?cost(from,point):Infinity);
+    const last=corners.map(point=>clear(point,to)?cost(point,to):Infinity);
     const previous=corners.map(()=>-1),seen=new Set();
     let end=-1,best=Infinity;
     while (seen.size<corners.length) {
@@ -477,12 +481,12 @@ function regionalRailPaths(layout,plot,obstacles,plan,limit,straight=stationAppr
     }
     const coverage=lots.reduce((sum,site)=>sum+Math.max(0,Math.min(...samples.map(([x,z])=>Math.hypot(x-site.x,z-site.z)))-7),0);
     const length=railLength(points);
-    const diagonal=moon?points.slice(1).reduce((sum,[x,z],i)=>{
+    const diagonal=points.slice(1).reduce((sum,[x,z],i)=>{
       const dx=Math.abs(x-points[i][0]),dz=Math.abs(z-points[i][1]);
       return sum+Math.min(dx,dz);
-    },0):0;
+    },0);
     return penalty/samples.length+coverage/Math.max(1,lots.length)*.38+(acrossRiver&&banks.size<2?28:0)
-      +Math.max(0,preferred-length)*.105+diagonal*.25;
+      +Math.max(0,preferred-length)*.105+diagonal*.52;
   };
   const worldPoint=([a,b])=>{
     const [x,,z]=pointOnSite([a,0,b],plot);
@@ -539,9 +543,9 @@ function regionalRailPaths(layout,plot,obstacles,plan,limit,straight=stationAppr
   if (!paths.length) {
     // Protect the straight station track while finding the largest usable
     // bend radius through the rest of the loop.
-    const detour=railDetour(obstacles,margin);
+    const detours=[railDetour(obstacles,margin,true),railDetour(obstacles,margin)];
     const possibilities=[];
-    for (const {waypoints} of candidates.slice(0,36)) {
+    for (const detour of detours) for (const {waypoints} of candidates.slice(0,36)) {
       const stationExit=waypoints[1],stationEntry=waypoints.at(-2),center=waypoints[0];
       if (!pathClear([stationEntry,center,stationExit],obstacles,margin)) continue;
       const outer=waypoints.slice(2,-2).filter(point=>clearRail(obstacles,point,point,margin));

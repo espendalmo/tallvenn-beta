@@ -153,6 +153,13 @@ function districtGround(layout,site,halfWidth,halfDepth) {
   return {y:high+.09,grade:high-low,dry:samples.every(p=>!p.water&&p.bank>.35&&p.basin>-.6&&p.volcanic===undefined)};
 }
 
+export function islandPromenadePoint(layout,site,distance) {
+  const middle=regionalPoint(site,0,site.halfDepth+5);
+  const angle=Math.atan2(middle.x,middle.z)+distance/60;
+  const shore=coastSite(layout,angle);
+  return regionalPoint(shore,0,-2.8);
+}
+
 export function resortShore(layout,site,x) {
   for (let z=6.8;z<=29;z+=.45) {
     const at=regionalPoint(site,x,z);
@@ -247,6 +254,14 @@ export function regionalAnnex(layout,kind) {
   if (kind==='hangar') return layout.hangar;
   if (kind==='megaResort') return layout.beachResort;
   if (kind==='lunarResort') return layout.spaceResort;
+  if (kind==='shoreWalk'&&layout.beachResort) {
+    const site=layout.beachResort;
+    return {...site,...regionalPoint(site,9,12),beach:false,waterfront:true,halfWidth:0,halfDepth:0};
+  }
+  if (kind==='riverWalk') {
+    const bridge=layout.berths.bridge,side=Math.sign(layout.origin.x-riverAt(layout,layout.origin.z))||1;
+    return {x:bridge.x+side*(riverWidth(layout,bridge.z)+2.65),z:bridge.z,y:.35,yaw:0,waterfront:true};
+  }
   if (kind==='shuttlePort'||kind==='airport') return layout.airfield;
   return null;
 }
@@ -281,7 +296,9 @@ export function regionLayout(theme,seed,grand=false,capacity=grand?GRAND_REGION_
   if (theme==='island'&&capacity>=50) {
     const peaks=[46+seed%8,40].flatMap(reach=>[-2.6,-3.05,2.66,-1.84,1.88].map(angle=>
       ({...polar(angle,reach),yaw:0,halfWidth:9.7,halfDepth:9.2})));
-    layout.volcano=peaks.find(site=>coastAt(layout,site.x,site.z)>11&&Object.values(berths).every(berth=>distance(site,berth)>23));
+    const suitablePeaks=peaks.filter(site=>coastAt(layout,site.x,site.z)>11&&Object.values(berths).every(berth=>distance(site,berth)>23));
+    const pickPeak=randomGenerator(seed^0x7521ac95);
+    layout.volcano=suitablePeaks[Math.floor(pickPeak()*suitablePeaks.length)];
   }
 
   const startZ=(rng()-.5)*12;
@@ -511,6 +528,7 @@ export function planRegion(layout,buildings) {
     const special=regionalAnnex(layout,kind)??berths[kind];
     const site=special??sites[land++];
     if (!site) continue;
+    if (kind==='shoreWalk'||kind==='riverWalk') { plots.push({...site,index,kind,entries:[]}); continue; }
     const target=closest(network,site);
     const entrance=special?{yaw:site.yaw}:ordinaryEntrance(site,target);
     const entries=special?specialEntrances(site,kind):[entrance.entry];

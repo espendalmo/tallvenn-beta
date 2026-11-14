@@ -330,6 +330,10 @@ export function planStreetRegion(layout,buildings,requiredLots=REGION_PLACES-Obj
   for (const {index,kind} of buildings) {
     latestPaths=new Map();
     const special=regionalAnnex(layout,kind)??layout.berths[kind];
+    if (special&&(kind==='shoreWalk'||kind==='riverWalk')) {
+      plots.push({...special,index,kind,entries:[]});
+      continue;
+    }
     const reserveLot=special?.lighthouse;
     if (special&&!reserveLot) {
       attach(special,index,kind);

@@ -286,6 +286,50 @@ function coaster() {
   ];
 }
 
+const WOOD_COASTER_POSTS=[[-6,.83,3.6],[-6.25,2.8,1.75],[-6.1,6.8,-1.4],[-4.35,7.7,-3.85],
+  [-1.05,4,-4.15],[2.3,1.48,-4.1],[5.18,3.86,-3.7],[6.48,2.75,-1.8],[6.59,1.06,1.2],
+  [5.17,1.62,3.85],[2.42,3.21,3.99],[-.23,1.21,3.93],[-3.4,.8,3.84]];
+export const WOOD_COASTER_TRACK=WOOD_COASTER_POSTS.flatMap((point,i)=>{
+  const a=WOOD_COASTER_POSTS.at(i-1),b=WOOD_COASTER_POSTS[(i+1)%WOOD_COASTER_POSTS.length];
+  return [.18,0,-.18].map(t=>point.map((v,j)=>v*(1-Math.abs(t))+(t>0?a[j]:b[j])*Math.abs(t)));
+});
+
+export const woodCoasterScale=site=>site?.streetSpan?Math.min(1,(site.streetSpan-2.65)/15.4):1;
+
+function woodCoaster(_,site) {
+  const timber='#99724e',brace='#c2996c',steel='#685043';
+  const edge=(i,side)=>{
+    const [x,y,z]=WOOD_COASTER_TRACK[i];
+    const a=WOOD_COASTER_TRACK.at(i-1),b=WOOD_COASTER_TRACK[(i+1)%WOOD_COASTER_TRACK.length];
+    const span=Math.hypot(b[0]-a[0],b[2]-a[2]);
+    return [x+side*(b[2]-a[2])/span,y,z-side*(b[0]-a[0])/span];
+  };
+  const stages=[base(15.4,10.65,'#acac82'),
+    WOOD_COASTER_TRACK.flatMap((point,i)=>{
+      const previous=(i+WOOD_COASTER_TRACK.length-1)%WOOD_COASTER_TRACK.length;
+      return pair.flatMap(side=>{
+        const [x,y,z]=edge(i,side*.48),[a,h,b]=edge(previous,side*.48);
+        return [beam([x,.31,z],[x,y,z],.134,timber),beam([a,h,b],[x,y,z],.17,timber),
+          beam([a,.48,b],[x,y-.11,z],.095,brace),
+          beam(edge(previous,side*.27),edge(i,side*.27),.096,steel)];
+      });
+    }),
+    [...WOOD_COASTER_TRACK.map((point,i)=>beam(edge(i,-.54),edge(i,.54),.083,brace)),
+      r(-3.8,3.76,3.55,1.66,.9,'#bc8563',.34),roof(-3.8,3.76,3.86,1.94,.63,'#597f76',1.29),
+      ...worldSign('flag',-3.8,1.05,4.6,'#8e5442')]];
+  const scale=woodCoasterScale(site);
+  const fit=([x,y,z])=>[x*scale,y,z];
+  return stages.map(stage=>stage.map(part=>({...part,x:part.x*scale,...(part.w!==undefined&&{w:part.w*scale}),
+    ...(part.from&&{from:fit(part.from),to:fit(part.to)})})));
+}
+
+function shoreWalkPreview(island) {
+  const deck=island?'#b8875d':'#c2b597';
+  return [[b(0,0,12,2.4,.23,deck,.02)],
+    Array.from({length:17},(_,i)=>b(i*.69-5.52,0,.63,2.31,.1,island?'#d5a978':'#dad3b6',.27)),
+    [-4,0,4].flatMap(x=>[b(x,-.89,.13,.13,1.16,'#566966',.34),d(x,-.89,.28,.28,.28,'#f4d48a',1.46)])];
+}
+
 function fitness() {
   return [base(9.75,8.25,'#e4c799'),
     [r(0,-1.3,6.88,4.02,2.49,'#c4d8bd',.35),r(0,-1.27,7.4,4.31,.26,'#607f7d',2.78),
@@ -2070,7 +2114,7 @@ const art={
   residence,driveThrough,lunarResort,hotel:()=>grandHotel(false),resort:()=>grandHotel(true),courthouse,bank:()=>civic(true),cinema,prison,
   restaurant:theme=>dining(theme==='island'),garden:theme=>gardens(theme==='island'),bandstand:theme=>gardens(theme==='island',true),
   pier:(theme)=>harbor(theme,'pier'),quay:theme=>harbor(theme,'quay'),marina:theme=>harbor(theme,'marina'),
-  bridge:(_,site)=>suspension(site?.span),wheel:theme=>ferris(theme==='island'),coaster,fitness,biodome,
+  bridge:(_,site)=>suspension(site?.span),wheel:theme=>ferris(theme==='island'),coaster,woodCoaster,shoreWalk:()=>shoreWalkPreview(true),riverWalk:()=>shoreWalkPreview(false),fitness,biodome,
   habitat:()=>habitat(),moonHotel:()=>habitat(true),oxygen:()=>utility('oxygen'),generator,
   refinery:()=>utility('refinery'),spaceField,rocketPort:()=>rocketPort(),telescope,craterLab,supplyDepot,beachClub,sunsetHotel,
   greatPark,factory,sawmill,busStation,camp:camping,arcade,radioTower:()=>radioTower(),broadcastHouse,spire:()=>glassTower('spire'),
@@ -2232,6 +2276,8 @@ export const GRAND_LANDMARKS={
     51:['Elveby politistasjon','Patruljebilen står klar til utrykning med blålys.','policeStation'],
     52:['Granittfyret','Et høyt steinfyr med messinglanterne og utsiktsgang.','stoneLighthouse','lighthouse'],
     53:['Elveby bilvask','Biler kjører gjennom vaskebåsen og kommer ut blanke og fine.','carWash'],
+    54:['Tretorden','En lang, klassisk berg-og-dal-bane på et reisverk av tre.','woodCoaster'],
+    55:['Elvepromenaden','En turvei med benker og lykter som følger elven.','riverWalk'],
   },
   moon:{
     37:['Målenåla','En restaurant som roterer over månebasen.','needleTower'],
@@ -2273,6 +2319,8 @@ export const GRAND_LANDMARKS={
     51:['Palmeøyens politistasjon','Et politihus med grønt tak og en patruljebil til øyens gater.','policeStation'],
     52:['Stormfyret','Et klassisk, høyt steinfyr med gyllen lampe og veranda rundt lykten.','stoneLighthouse','lighthouse'],
     53:['Kokosvasken','En vaskehall med palmegrønne søyler og skum til sandete biler.','carWash'],
+    54:['Palmesuset','En klassisk berg-og-dal-bane i tre med et høyt stup og lange, lave bakker.','woodCoaster'],
+    55:['Strandpromenaden','En lang gangvei i tre med utsikt over stranden og havet.','shoreWalk'],
   },
 };
 

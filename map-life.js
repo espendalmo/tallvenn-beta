@@ -1,5 +1,5 @@
 import {mapStorySeed,personStories,vehicleStories} from './map-stories.js';
-import {visitor,dome,tube,pointOnSite,RESIDENCE_DRIVER} from './scenery.js';
+import {visitor,dome,tube,pointOnSite,vehicle,RESIDENCE_DRIVER} from './scenery.js';
 import {roadProjections,streetNetwork,streetPathBetween} from './street-network.js';
 import {regionSurface} from './regions.js';
 import {streetHalfWidth} from './region-roads.js';
@@ -66,7 +66,8 @@ export function mapCharacterInfo(scene,key,discovery,profileName) {
     if (actor?.transitPassenger==='train') story='På vei opp til toget. Håper å få vindusplass når det kjører over elven.';
     if (actor?.transitPassenger==='monorail') story='Tar trappen opp til månetoget. Teller trinnene for å sjekke om det er like mange i månetyngdekraft.';
     if (actor?.transitPassenger==='tram') story='På vei opp til trikken. Skal ta én runde til for å se hvilken palm som er høyest.';
-    if (actor?.railJourney) story=lunar?'Tar svevebanen på besøk. Månestøvet må vente på neste tog.'
+    if (actor?.busJourney) story='Tar bussen videre på besøk. Teller holdeplassene for å være sikker på å gå av på riktig sted.';
+    else if (actor?.railJourney) story=lunar?'Tar svevebanen på besøk. Månestøvet må vente på neste tog.'
       :scene.id==='island'?'Tar trikken på besøk. Hadde med en kokosnøtt som niste, men den tok en annen avgang.':
         'Tar toget på besøk. Har pakket niste til én holdeplass og dessert til den neste.';
     if (actor?.kind==='slide') story=lunar
@@ -116,6 +117,48 @@ function walkingLeg(points) {
   }};
 }
 
+export function neighborhoodBus(layout,plan,plots) {
+  const hub=plots.find(plot=>plot.kind==='busStation')??plots.find(plot=>plot.kind==='tramStation'||plot.kind==='monorailStation')??plots[0];
+  if (!hub?.entries?.length||plots.length<4||!plan.network) return null;
+  const locate=entry=>roadProjections(plan.paths,entry,1.2).sort((a,b)=>a.gap-b.gap)[0];
+  const from=locate(hub.entries[0]);
+  if (!from) return null;
+  const targets=plots.filter(plot=>plot!==hub&&plot.entries?.length)
+    .sort((a,b)=>Math.abs(walkGap(hub,a)-25)-Math.abs(walkGap(hub,b)-25));
+  for (const plot of targets.slice(0,12)) {
+    const to=locate(plot.entries[0]);
+    const street=to&&streetPathBetween(plan.network,from,to);
+    if (!street||street.length<4||walkGap(from,to)<12) continue;
+    const height=({x,z})=>(plan.streetElevation?.(x,z)??regionSurface(layout,x,z).y)+.05;
+    const platform=(road,side)=>({x:road.x-road.v*side*2,z:road.z+road.u*side*2});
+    const last=street.at(-2),first=street[1];
+    const direction=(road,point)=>Math.sign((point.x-road.x)*road.u+(point.z-road.z)*road.v)||1;
+    const stops=[from,to].map((road,i)=>{
+      const side=direction(road,i?last:first)*(i?-1:1);
+      const stop=platform(road,side);
+      return {distance:i,entry:road,access:[[stop.x,height(stop),stop.z]]};
+    });
+    const out=walkingLeg(street.map(point=>({...point,y:height(point)})));
+    const back=walkingLeg(out.points.slice().reverse());
+    const dwell=3.8,travel=out.duration*.67,period=2*(dwell+travel);
+    if (out.duration<5) continue;
+    const service={kind:'bus',stops,period,schedule:[{distance:0,arrive:0,depart:dwell},{distance:1,arrive:dwell+travel,depart:dwell*2+travel}]};
+    service.vehicle={kind:'bus',vehicleModel:layout.theme==='moon'?'rover-bus':'bus',parts:vehicle(layout.theme==='moon'?'rover-bus':'bus','#6f9e93'),
+      pose(seconds){
+        const t=seconds%period,returning=t>=dwell+travel;
+        const clock=returning?t-dwell-travel:t;
+        const point=(returning?back:out).at((clock-dwell)/.67);
+        const {x,y,z,yaw}=point;
+        const moving=clock>dwell;
+        const shift=.72*Math.min(1,Math.max(0,(clock-dwell)*2),(dwell+travel-clock)*2);
+        return {x:x+Math.cos(yaw)*shift,y,z:z-Math.sin(yaw)*shift,cos:Math.cos(yaw),sin:Math.sin(yaw),
+          stride:0,rollCos:1,rollSin:0,sound:moving?.26:0};
+      }};
+    return service;
+  }
+  return null;
+}
+
 function railTrip(service,from,to,ready) {
   const a=service.schedule.find(stop=>stop.distance===from.distance);
   const b=service.schedule.find(stop=>stop.distance===to.distance);
@@ -137,7 +180,7 @@ function railTrip(service,from,to,ready) {
   return {boardAt,offAt,boarding,leaving,end:offAt+leaving.duration,vehicle:service.vehicle};
 }
 
-export function residentJourneys(layout,plan,people,service) {
+export function residentJourneys(layout,plan,people,rail,bus) {
   if (people.length<2||!plan.paths.length) return [];
   const network=plan.network??streetNetwork(plan.paths);
   const width=streetHalfWidth(layout.theme);
@@ -163,19 +206,22 @@ export function residentJourneys(layout,plan,people,service) {
     if (shoulder.some(p=>regionSurface(layout,p.x,p.z).water&&p.y<.13)) return null;
     return walkingLeg([...from.access,...shoulder,...to.access.slice().reverse()]);
   };
-  const stops=(service?.stops??[]).flatMap(stop=>{
+  const stops=[rail,bus].filter(Boolean).flatMap(service=>service.stops.flatMap(stop=>{
     const start=pathPoint(stop.access[0]);
     const road=locate(stop.entry??start,4.3);
-    return road?[{...stop,road,access:stop.access.slice().reverse().map(pathPoint)}]:[];
-  });
+    return road?[{...stop,service,road,access:stop.access.slice().reverse().map(pathPoint)}]:[];
+  }));
   const residents=[],used=new Set();
   for (const from of available) {
-    if (used.has(from.plot)||residents.length>=6) continue;
+    if (used.has(from.plot)||residents.length>=8) continue;
     const near=available.filter(to=>to.plot!==from.plot&&!used.has(to.plot)&&walkGap(from,to)<39)
       .sort((a,b)=>walkGap(from,a)-walkGap(from,b));
     const start=3.1+residents.length*.85;
     const nearStops=person=>stops.filter(stop=>walkGap(person,stop.road)<32)
-      .sort((a,b)=>walkGap(person,a.road)-walkGap(person,b.road));
+      .sort((a,b)=>{
+        const preference=stop=>Number((stop.service.kind==='bus')===(residents.length%4===2))*14;
+        return walkGap(person,a.road)-preference(a)-walkGap(person,b.road)+preference(b);
+      });
     const departures=nearStops(from).slice(0,4).map(stop=>({stop,path:walkingRoute(from,stop)})).filter(entry=>entry.path);
     let destination;
     for (const to of near) {
@@ -183,25 +229,26 @@ export function residentJourneys(layout,plan,people,service) {
       if (!path) continue;
       destination??={to,path};
       for (const last of nearStops(to).slice(0,4)) {
-        const first=departures.find(entry=>entry.stop!==last);
+        const first=departures.find(entry=>entry.stop!==last&&entry.stop.service===last.service);
         if (!first) continue;
         const outbound=walkingRoute(last,to);
+        const service=last.service;
         const trip=outbound&&railTrip(service,first.stop,last,start+first.path.duration);
         if (!trip) continue;
-        destination={to,path,trip,inbound:first.path,outbound};
+        destination={to,path,trip,inbound:first.path,outbound,service};
         break;
       }
       if (destination.trip||!departures.length) break;
     }
     if (!destination) continue;
-    const {to,path,trip,inbound,outbound}=destination;
+    const {to,path,trip,inbound,outbound,service}=destination;
     const end=trip?trip.end+outbound.duration:start+path.duration;
     const swapStart=end+5.5;
     const back=walkingLeg(path.points.slice().reverse());
     const endCycle=swapStart+Math.max(path.duration,back.duration)+6;
     const cycle=trip?Math.ceil(endCycle/service.period)*service.period:endCycle;
     const make=(person,away,go,returnHome,rides)=>({
-      kind:'walk',resident:person.entity,visits:away.plot.index,railJourney:Boolean(rides),
+      kind:'walk',resident:person.entity,visits:away.plot.index,railJourney:Boolean(rides)&&service.kind!=='bus',busJourney:Boolean(rides)&&service.kind==='bus',
       voice:person.kind==='human'?'people':person.kind,
       parts:person.model.map(part=>({...part,entity:person.entity})),
       pose(seconds){

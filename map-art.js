@@ -1,8 +1,9 @@
 import {isSlidePark,slideRiders} from './slide-parks.js';
 import {footballActors} from './map-life.js';
 import {box,rounded,tube,dome,beam,placeParts,pointOnSite,actor,coasterActor,visitor,swimmer} from './scenery.js';
+import {randomGenerator} from './worlds.js';
 import {regionSurface,regionalPoint,resortShore} from './regions.js';
-import {airportRunway,COASTER_TRACK,planeModel,lightPlaneModel,shuttleModel,ROCKET_PAD,WHEEL_HUB} from './world-landmarks.js';
+import {airportRunway,COASTER_TRACK,WOOD_COASTER_TRACK,woodCoasterScale,planeModel,lightPlaneModel,shuttleModel,ROCKET_PAD,WHEEL_HUB} from './world-landmarks.js';
 
 const paint='#e3ae55';
 const rust='#bf8651';
@@ -98,9 +99,12 @@ export function rideModels(plot,stages) {
     const [x,y,z]=pointOnSite(WHEEL_HUB,plot);
     return [{kind:'wheel',x,y,z,yaw:plot.yaw,parts}];
   }
-  if (plot.kind==='coaster') {
-    const points=COASTER_TRACK.map(([x,y,z])=>pointOnSite([x,y+.11,z],plot));
-    return ['#da866a','#70aeb0'].map((color,i)=>coasterActor(coasterCarModel(color,true),points,.23+i*.039));
+  if (plot.kind==='coaster'||plot.kind==='woodCoaster') {
+    const track=plot.kind==='woodCoaster'?WOOD_COASTER_TRACK:COASTER_TRACK;
+    const scale=plot.kind==='woodCoaster'?woodCoasterScale(plot):1;
+    const points=track.map(([x,y,z])=>pointOnSite([x*scale,y+.11,z],plot));
+    const colors=plot.kind==='woodCoaster'?['#a85f4a','#ca9a62','#679384']:['#da866a','#70aeb0'];
+    return colors.map((color,i)=>coasterActor(coasterCarModel(color,true),points,.23+i*(plot.kind==='woodCoaster'?.031:.039)));
   }
   if (plot.kind==='field'||plot.kind==='spaceField') return footballActors(plot);
   if (plot.kind==='lunarResort') return moonDustBathers(plot);
@@ -172,6 +176,7 @@ const mealVisitors=[[-2.75,.54,3.28,Math.PI,true],[.13,.54,3.65,Math.PI,true],[2
 const campVisitors=[[1.63,.83,-.1,.12,true],[-.01,.42,2.3,-.42]];
 const hotelVisitors=[[-2.27,.35,2.63,.29],[.69,.35,3.91,-.67]];
 const VISITORS={
+  house:[[1.4,.36,2.9,-.35],[-1.35,.36,2.85,.36]],
   riverSlides:[[-3.25,.36,3.45,-.45]],mangoSlides:[[2.45,.36,3.56,-.45],[3.31,.36,3.34,-.42]],
   dustSlides:[[1.57,.36,3.08,-.58],[2.74,.36,3.32,-.55]],
   greatPark:parkVisitors,palmGarden:parkVisitors,moonGarden:parkVisitors,
@@ -210,13 +215,17 @@ const VISITORS={
   cargoDepot:[[-2.79,.35,3.78,-.42]],
 };
 
-export function landmarkVisitors(theme,plot,mobile) {
+export function landmarkVisitors(theme,plot,mobile,seed=0) {
   const positions=plot.residence?[[-4.53,.18,-4.94,.62],[3.3,.18,-6.66,-.65]]
     :VISITORS[plot.kind]??(plot.kind==='bridge'?[]:theme==='moon'?[[-2.1,.36,3.14,-.25],[1.53,.36,2.82,.4]]:[[1.4,.36,2.9,-.35]]);
+  const random=randomGenerator(seed^Math.imul(plot.index+1,0x716ac613));
+  const front=positions.length===2&&positions.every(([,y,z,,seated])=>!seated&&z>2&&y<.64)&&!plot.beach;
+  const count=front?Math.floor(random()*4):positions.length;
+  const placements=count===3&&front?[...positions,[(positions[0][0]+positions[1][0])*.5,.36,Math.max(...positions.map(p=>p[2]))+.65,.1]]:positions.slice(0,count);
   const outfits=['#ca8677','#6c9cb4','#e0b375','#8a80b0'];
   const skins=['#deae85','#aa765b','#ebbf91'];
   const deckX=plot.beach?1.5:1,deckZ=plot.beach?1.22:1;
-  const people=positions.flatMap(([u,y,v,yaw,seated],i)=>{
+  const people=placements.flatMap(([u,y,v,yaw,seated],i)=>{
     const x=u*deckX,z=v*deckZ;
     const kind=theme==='moon'?(i===1?'alien':'astronaut'):'human';
     const model=visitor(kind,outfits[(plot.index+i)%outfits.length],skins[(plot.index+i)%skins.length],seated,.83,(plot.index*3+i)%8);

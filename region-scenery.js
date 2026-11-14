@@ -1,11 +1,11 @@
 import {box,dome,tube,beam,pointOnSite,placeParts,regionActors,parkingTours,serviceDriveways,driveThroughApproach,actor,visitor,MAX_ACTORS,isCarWash,washBubbles} from './scenery.js';
-import {regionLayout,planRegion,regionVisibility,regionSurface,roadElevation,regionalFootprint,residenceDrive,RESIDENCE_PLOT} from './regions.js';
+import {regionLayout,planRegion,riverAt,riverWidth,resortShore,islandPromenadePoint,regionalPoint,regionVisibility,regionSurface,roadElevation,regionalFootprint,residenceDrive,RESIDENCE_PLOT} from './regions.js';
 import {REGION_PLACES,WORLD_BUILD_STEPS,grandCatalog,hasExpandedCatalog,randomGenerator,worldStatus} from './worlds.js';
 import {planStreetRegion} from './street-grid.js';
 import {prepareRoadGrades,prepareRoadTunnels,regionRoads,streetHalfWidth} from './region-roads.js';
 import {roadProjections} from './street-network.js';
 import {constructionYard,landmarkVisitors,lunarEarth,rideModels,resortBeach} from './map-art.js';
-import {residentJourneys} from './map-life.js';
+import {residentJourneys,neighborhoodBus} from './map-life.js';
 import {plotAccess,terrainFoundation} from './landmark-ground.js';
 import {districtRail,districtTram,helicopterModels} from './transport.js';
 import {regionalHeadquarters} from './world-landmarks.js';
@@ -503,6 +503,84 @@ function pocketParks(layout,plan,completed,finds) {
   return {parts,walks,paths};
 }
 
+function promenade(layout,plan,plot,phase) {
+  const island=plot.kind==='shoreWalk';
+  const resort=layout.beachResort;
+  const bridge=layout.berths.bridge;
+  const roadside=(x,z)=>roadProjections(plan.paths,{x,z},2).length>0;
+  const points=Array.from({length:65},(_,i)=>{
+    const along=(i-32)*.9;
+    let point;
+    if (island) {
+      if (!resort) return null;
+      const shore=resortShore(layout,resort,along);
+      point=islandPromenadePoint(layout,resort,along);
+      if (Math.abs(along)<9&&shore!==null) {
+        const link=regionalPoint(resort,along,Math.max(7,shore-4.3));
+        if (regionSurface(layout,link.x,link.z).bank>1.55&&Math.hypot(point.x-link.x,point.z-link.z)<4) {
+          const weight=1-Math.abs(along)/9;
+          point={x:lerp(point.x,link.x,weight),z:lerp(point.z,link.z,weight)};
+        }
+      }
+    } else {
+      const z=bridge.z+along,side=Math.sign(plot.x-riverAt(layout,plot.z))||1;
+      point={x:riverAt(layout,z)+side*(riverWidth(layout,z)+2.65),z};
+    }
+    const {x,z}=point,tile=regionSurface(layout,x,z);
+    if (tile.water||island&&tile.bank<1.55||plan.plots.some(other=>other!==plot&&other!==resort&&!other.waterfront
+      &&(other.halfWidth?regionalFootprint(other,x,z,.9):Math.hypot(x-other.x,z-other.z)<6))) return null;
+    const crossing=roadside(x,z);
+    const riverBridge=!island&&plan.plots.some(site=>site.kind==='bridge')&&Math.abs(z-bridge.z)<1.6;
+    const y=riverBridge?bridge.y+.53:crossing?(plan.streetElevation?.(x,z)??tile.y)+.016:tile.y+.14;
+    return {...point,y,crossing:crossing||riverBridge};
+  });
+  const paths=[];
+  for (const p of points) {
+    if (!p) { if (paths.at(-1)?.length) paths.push([]); continue; }
+    if (!paths.length) paths.push([]);
+    if (paths.at(-1).length&&Math.hypot(p.x-paths.at(-1).at(-1).x,p.z-paths.at(-1).at(-1).z)>3) paths.push([]);
+    paths.at(-1).push(p);
+  }
+  const parts=[],walkers=[];
+  const service=paths.filter(path=>path.length>=3);
+  for (const [k,path] of service.entries()) {
+    for (const [i,p] of path.entries()) {
+      const prev=path[Math.max(0,i-1)],next=path[Math.min(path.length-1,i+1)];
+      const angle=Math.atan2(next.x-prev.x,next.z-prev.z);
+      const point=(x,y,z)=>pointOnSite([x,y,z],{...p,yaw:angle});
+      if (p.crossing) continue;
+      const span=(Math.hypot(p.x-prev.x,p.z-prev.z)+Math.hypot(p.x-next.x,p.z-next.z))*.5+.15;
+      const deck=phase>1&&i%3===0?'#d1a77a':island?'#b89369':'#c4b99d';
+      parts.push(face([point(-.95,0,-span/2),point(-.95,0,span/2),point(.95,0,span/2),point(.95,0,-span/2)],deck,3.75));
+      if (phase>1&&i%6===0) {
+        const [x,y,z]=point(.81,0,0);
+        parts.push(tube(x,z,.08,.08,.79,'#627370',y),dome(x,z,.24,.24,.24,'#f7db96',y+.78));
+      }
+      if (phase>2&&i%11===4) {
+        const [x,y,z]=point(-.71,0,0);
+        parts.push(...placeParts([box(0,0,.39,.98,.11,'#9f7251',.22),box(-.13,0,.09,.98,.26,'#9f7251',.32)],{x,y,z,yaw:angle}));
+      }
+    }
+    if (phase===3&&path.length>=7&&walkers.length<4) {
+      const length=path.length-1;
+      for (let i=0;i<(length>18?2:1);i++) {
+        const step=i*.44+k*.13;
+        walkers.push({kind:'walk',promenade:true,characterSlot:940+k*2+i,voice:'people',
+          parts:visitor('human',i?'#b57779':'#589c93',undefined,false,.83,i),
+          pose(seconds){
+            const clock=seconds*1.02+step*length,position=clock%(length*2);
+            const distance=position<=length?position:length*2-position;
+            const j=Math.min(length-1,Math.floor(distance)),p=path[j],q=path[j+1],t=distance-j;
+            const yaw=Math.atan2(q.x-p.x,q.z-p.z)+(position>length?Math.PI:0);
+            return {x:lerp(p.x,q.x,t),y:lerp(p.y,q.y,t)+.045,z:lerp(p.z,q.z,t),cos:Math.cos(yaw),sin:Math.sin(yaw),
+              stride:Math.sin(seconds*8)*.15,rollCos:1,rollSin:0,sound:0};
+          }});
+      }
+    }
+  }
+  return {parts,walkers};
+}
+
 const PHASES=['grunnarbeid','form og fasade','siste detaljer'];
 
 export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,season) {
@@ -593,17 +671,24 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
   ];
   let latest=[],last,finished=null,latestTarget=null;
   const landmarks={},sites={},rides=[],beachSwimmers=[];
-  const residents=[];
+  const residents=[],promenadeWalkers=[];
   developments.forEach(({plot,steps},i)=>{
     const amount=Math.min(WORLD_BUILD_STEPS,map.progress-i*WORLD_BUILD_STEPS);
     const {name}=buildingInfo(plot.index);
-    const height=Math.max(...steps.flatMap(step=>step.map(part=>part.y+part.h)));
+    const isPromenade=plot.kind==='shoreWalk'||plot.kind==='riverWalk';
+    const height=isPromenade?2:Math.max(...steps.flatMap(step=>step.map(part=>part.y+part.h)));
     const done=amount===WORLD_BUILD_STEPS;
     latestTarget={...plot,height};
     sites[plot.index]={...latestTarget,built:done};
-    const shadow=plot.waterfront?[]:groundShadow(layout,plan,plot.x+1.92,plot.z-1.47,7.35,6.18,amount===1?.15:.27,12,season);
+    const walking=isPromenade?promenade(layout,plan,plot,amount):null;
+    if (walking) promenadeWalkers.push(...walking.walkers);
+    const shadow=plot.waterfront||isPromenade?[]:groundShadow(layout,plan,plot.x+1.92,plot.z-1.47,7.35,6.18,amount===1?.15:.27,12,season);
     parts.push(...shadow);
-    for (let j=0;j<amount;j++) {
+    if (walking) {
+      latest=walking.parts.map(part=>({...part,landmark:plot.index}));
+      parts.push(...latest);
+    }
+    for (let j=0;!walking&&j<amount;j++) {
       latest=placeParts(steps[j].filter(part=>!(done&&(part.flight||part.transitPreview))),plot)
         .flatMap(part=>terrainFoundation(layout,part,map.seed^Math.imul(plot.index+1,0x6c8e9cf5)))
         .map(part=>({...part,landmark:plot.index}));
@@ -650,9 +735,9 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
         parts.push(...beach.parts.map(part=>({...part,landmark:plot.index})));
         beachSwimmers.push(...beach.swimmers);
       }
-      parts.push(...landmarkVisitors(id,plot,residents));
+      if (!isPromenade) parts.push(...landmarkVisitors(id,plot,residents,map.seed));
       parts.push(...seasonalDetails(layout,plot,season));
-    } else {
+    } else if (!isPromenade) {
       const yard=constructionYard(layout,plot,amount,height);
       parts.push(...yard);
       if (amount===1) latest=[...shadow,...latest,...yard];
@@ -663,12 +748,13 @@ export function expandedWorldScene(id,map,palette,buildingInfo,buildingParts,sea
   const street=locals.filter(actor=>actor.fleet);
   const roadworks=planRoadworks(layout,plan,[...street,...locals.filter(actor=>actor.kind==='bus'||actor.kind==='hover')],status.built);
   const speakers=[...locals.filter(actor=>actor.encounter),...locals.filter(actor=>actor.voice&&!actor.encounter)].slice(0,2);
-  const journeys=residentJourneys(layout,plan,residents,rail?.passengerService);
+  const bus=neighborhoodBus(layout,plan,completedPlots);
+  const journeys=residentJourneys(layout,plan,residents,rail?.passengerService,bus);
   const primaryTours=[...new Map(parkedTours.slice().reverse().map(actor=>[actor.parking.plot,actor])).values()];
   const roadQuota=id==='moon'?17:20;
   const essential=[...rides.filter(actor=>actor.kind==='observation'||actor.kind==='wheel'),...(rail?.actors??[]),...roadworks.crews,
     ...primaryTours.filter(actor=>actor.service),...helicopter,...craft.slice(0,5),...beachSwimmers,...rides.filter(actor=>actor.dustBather),...primaryTours,
-    ...street.slice(0,roadQuota),...journeys.slice(0,2),...(rail?.walkers??[]),...journeys.slice(2),
+    ...street.slice(0,roadQuota),...promenadeWalkers.slice(0,2),...(journeys.some(person=>person.busJourney)?[bus.vehicle]:[]),...journeys.slice(0,4),...(rail?.walkers??[]),...journeys.slice(4),...promenadeWalkers.slice(2),
     ...parkedTours.filter(actor=>actor.parking.merge),...speakers,
     ...(discoveries.visitor?[discoveries.visitor]:[]),...discoveries.smoke,
     ...parks.walks,...locals.filter(actor=>actor.driveThrough||actor.offroadExplorer||['bus','offroad-rover','hover'].includes(actor.kind))];
